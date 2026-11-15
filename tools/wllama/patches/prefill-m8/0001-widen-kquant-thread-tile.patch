@@ -1,0 +1,39 @@
+diff --git a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
+index cbeed9e948..fc163df92f 100644
+--- a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
++++ b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
+@@ -2405,6 +2405,7 @@ class ggml_webgpu_shader_lib {
+             tile_k = is_quant ? WEBGPU_MUL_MAT_REG_TILE_K_QUANT : WEBGPU_MUL_MAT_REG_TILE_K_FLOAT;
+         }
+ 
++        uint32_t tile_m = WEBGPU_MUL_MAT_TILE_M;
+         uint32_t tile_n = WEBGPU_MUL_MAT_TILE_N;
+         // Q4_K/Q6_Kのprefillでは、32x64出力を64要素ずつ積む。
+         // 重みの再読込みとbarrierを減らす。MMVQとsubgroup matrixの契約は保つ。
+@@ -2415,10 +2416,16 @@ class ggml_webgpu_shader_lib {
+             tile_n = 8u;
+             tile_k = 64u;
+             variant += "_n8k64";
++            // 1スレッドの受け持ちを4x8から8x8へ広げ、積和1回あたりの共有メモリーの読出しを12/32から16/64へ減らす。
++            // 共有メモリーは16KBで、WebGPUが全deviceに保証する上限16384バイトに収まる。GPU名では分けない。
++            if (context.wg_mem_limit_bytes >= 16384u) {
++                tile_m = 8u;
++                variant += "_m8";
++            }
+         }
+ 
+         // Tiles
+-        defines.push_back("TILE_M=" + std::to_string(WEBGPU_MUL_MAT_TILE_M) + "u");
++        defines.push_back("TILE_M=" + std::to_string(tile_m) + "u");
+         defines.push_back("TILE_N=" + std::to_string(tile_n) + "u");
+ 
+         // Subgroup matrix specifics
+@@ -2455,7 +2462,7 @@ class ggml_webgpu_shader_lib {
+ 
+         auto decisions                 = std::make_shared<ggml_webgpu_mul_mat_shader_decisions>();
+         decisions->tile_k              = tile_k;
+-        decisions->tile_m              = WEBGPU_MUL_MAT_TILE_M;
++        decisions->tile_m              = tile_m;
+         decisions->tile_n              = tile_n;
+         decisions->use_subgroup_matrix = key.use_subgroup_matrix;
+         if (key.use_subgroup_matrix) {

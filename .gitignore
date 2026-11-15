@@ -1,0 +1,9 @@
+dist/
+local-notes/
+node_modules/
+extension/local-config.json
+*.log
+*.mhtml
+*.gguf
+.env
+.env.*

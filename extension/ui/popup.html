@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>Mockingword</title>
+  <link rel="stylesheet" href="ui.css">
+  <style>
+    body { width: 300px; margin: 0; padding: 12px; box-sizing: border-box; overflow-x: hidden; }
+    *, *::before, *::after { box-sizing: border-box; }
+    h1 { font-size: 14px; margin: 0 0 10px; }
+    .stack { display: flex; flex-direction: column; gap: 6px; }
+    .row { display: flex; gap: 6px; }
+    .row > * { flex: 1; }
+    .primary { padding: 8px; font-weight: bold; }
+    hr { border: 0; border-top: 1px solid var(--line); margin: 10px 0; }
+    #status { font-size: 12px; color: var(--muted); margin: 4px 0 6px; }
+    label.model { display: block; font-size: 12px; color: var(--muted); }
+    label.model select { display: block; width: 100%; margin-top: 2px; font-size: 13px; color: var(--fg); }
+  </style>
+<script type="module" src="theme.js"></script>
+</head>
+<body class="mw-popup">
+  <h1 class="brand"><img src="../icons/icon48.png" alt=""><span>Mocking<span class="brand-word">word</span></span></h1>
+  <div class="stack">
+    <button id="page" class="primary">このページを訳す（Alt+T）</button>
+    <div class="row">
+      <button data-show="trans">訳文</button>
+      <button data-show="orig">原文</button>
+      <button data-show="both">対訳</button>
+    </div>
+    <button id="text">テキスト翻訳を開く</button>
+  </div>
+  <hr>
+  <label class="model">モデル
+    <select id="model"></select>
+  </label>
+  <div id="status">確認中…</div>
+  <div class="row">
+    <button id="unload">モデルを解放</button>
+    <button id="options">設定</button>
+  </div>
+  <script src="popup.js" type="module"></script>
+</body>
+</html>

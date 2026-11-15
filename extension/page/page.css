@@ -1,0 +1,73 @@
+/* ページに差し込む見た目。訳文の表示の切り替えは、page/write.js が html 要素に plamo-mode-* を付けて行う。 */
+/* 訳文表示で隠すのは、訳文が届いた原文（page/write.js が data-plamo-orig="done" を付ける）だけ。届く前の原文は見せたまま。 */
+html.plamo-mode-trans [data-plamo-orig="done"] { display: none !important; }
+/* 原文を隠すと空になる入れ物（インラインコードなど）も、訳文表示では入れ物ごと隠す（余白と背景の空の箱を残さない）。 */
+html.plamo-mode-trans [data-plamo-shell] { display: none !important; }
+html.plamo-mode-orig .plamo-tr { display: none !important; }
+html:not(.plamo-mode-trans):not(.plamo-mode-orig):not(.plamo-mode-both) .plamo-tr { display: none !important; }
+
+/*
+ * 訳している途中の段落（送ったまとまり）：原文を少し薄くするだけで、動かさない。
+ * 訳している間は、ページの描画と翻訳の計算が同じ GPU を使う。送った段落は1ページで百数十件になるので、
+ * 段落ごとのアニメーションは、どの方式でも翻訳を遅くする（docs/04「待ちの見せ方」）。
+ * 進み具合は上部のバーの線と待ち時間で見せる。
+ */
+[data-plamo-orig][data-plamo-working] { opacity: 0.55; }
+
+/* 届いた訳文は、光が消えてから0.25秒でふわっと出す。 */
+.plamo-tr { animation: plamo-arrive 0.25s ease-out; }
+@keyframes plamo-arrive {
+  from { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .plamo-tr { animation: none; }
+}
+/* 対訳：原文の下に、色を変えて訳文を出す。 */
+html.plamo-mode-both .plamo-tr {
+  display: block;
+  margin: 0.15em 0 0.4em;
+  color: inherit;
+  border-left: 2px solid var(--mw-secondary);
+  padding-left: 0.7em;
+  font-size: 0.95em;
+}
+@media (prefers-color-scheme: dark) {
+  html.plamo-mode-both .plamo-tr { color: inherit; }
+}
+
+/* 選択範囲の訳と通知。ページの見た目に左右されないよう、主要な性質を固定する。 */
+.plamo-ui {
+  all: initial;
+  position: fixed;
+  z-index: 2147483647;
+  box-sizing: border-box;
+  font: 14px/1.6 "Yu Gothic UI", "Meiryo UI", system-ui, sans-serif;
+  color: var(--mw-on-surface);
+  background: var(--mw-surface-container-low);
+  border: 1px solid var(--mw-outline);
+  border-radius: 16px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+}
+.plamo-bubble {
+  max-width: 420px;
+  max-height: 50vh;
+  overflow: auto;
+  padding: 10px 12px;
+  white-space: pre-wrap;
+}
+.plamo-bubble-text { all: unset; display: block; white-space: pre-wrap; }
+.plamo-bubble-foot { all: unset; display: block; margin-top: 6px; font-size: 11px; color: var(--mw-on-surface-variant); text-align: right; }
+.plamo-bubble-link { all: unset; cursor: pointer; color: var(--mw-primary); text-decoration: underline; }
+@media (prefers-color-scheme: dark) { .plamo-bubble-link { color: var(--mw-primary); } }
+.plamo-toast {
+  right: 16px;
+  bottom: 16px;
+  max-width: 420px;
+  padding: 8px 12px;
+}
+.plamo-toast-error { border-color: #d1242f; color: #82071e; background: #fff5f5; }
+@media (prefers-color-scheme: dark) {
+  .plamo-ui { color: var(--mw-on-surface); background: var(--mw-surface-container-low); border-color: var(--mw-outline-variant); }
+  .plamo-bubble-foot { color: var(--mw-on-surface-variant); }
+  .plamo-toast-error { color: #ffa198; background: #2d1214; border-color: #f85149; }
+}

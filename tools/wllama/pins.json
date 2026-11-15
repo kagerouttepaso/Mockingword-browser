@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "wllama": {
+    "repository": "https://github.com/ngxson/wllama.git",
+    "commit": "6647c1ea3837b2f0205a300c3bf5ff644aaa06bf",
+    "version": "3.13.0",
+    "packageLockSha256": "c9b6f10a4b0fedfb77479b86ff0c89bc4cccaee04885887ceb2b334f0e823e3d"
+  },
+  "llamaCpp": {
+    "repository": "https://github.com/ggml-org/llama.cpp.git",
+    "commit": "7d7f0287530bc8981690f361d8c1627dbae1c99a"
+  },
+  "platform": "linux/amd64",
+  "emsdk": {
+    "tag": "emscripten/emsdk:4.0.20",
+    "image": "emscripten/emsdk@sha256:460fff8f8ac87e11b16447fbd66538a686eafa0e4fb977aa0989ed19fe2079f7"
+  },
+  "node": {
+    "tag": "node:24.18.1-bookworm-slim",
+    "image": "node@sha256:235600a8101ab264e117b1768e925532262668dc9b581ef1dd7d96ced463b8e7",
+    "version": "v24.18.1",
+    "npmVersion": "11.16.0"
+  },
+  "dawn": {
+    "tag": "v20260317.182325",
+    "url": "https://github.com/google/dawn/releases/download/v20260317.182325/emdawnwebgpu_pkg-v20260317.182325.zip",
+    "sha256": "8dcae86c630d76b6794b271c6572becba36f4237d132bee121a56638c3d76575"
+  },
+  "distribution": {
+    "indexSha256": "fffd95c16ca191f31f4303664a05189c43d0cb20c52b67276c04e8857b138b64",
+    "wasmSha256": "79ac5be917b71d50571a4f584436a9f6baf6b6e57719d094ed8bd950e9a65780"
+  }
+}

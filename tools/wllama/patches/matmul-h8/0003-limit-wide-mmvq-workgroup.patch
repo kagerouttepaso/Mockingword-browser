@@ -1,0 +1,21 @@
+0002の後に適用。幅広Q4_K/Q6_Kのworkgroupを128へ縮める診断候補。
+1〜4列のshader設定とscratch計算は維持する。
+
+diff --git a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
+index 8b5b443..bc25e98 100644
+--- a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
++++ b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
+@@ -2251,6 +2251,13 @@ class ggml_webgpu_shader_lib {
+             outputs_per_wg = WEBGPU_MUL_MAT_VEC_LEGACY_Q_OUTPUTS_PER_WG;
+         }
+ 
++        // 幅広MMVQだけthread数を減らし、レジスタ予約と空のK担当threadを減らす。
++        if (key.use_mmvq && key.num_cols > GGML_WEBGPU_MUL_MAT_VEC_MAX_ROWS &&
++            (key.src0_type == GGML_TYPE_Q4_K || key.src0_type == GGML_TYPE_Q6_K)) {
++            wg_size = 128u;
++            variant += "_wg128";
++        }
++
+         if (key.use_mmvq) {
+             defines.push_back("MMVQ");
+             defines.push_back("Q8_1_T");

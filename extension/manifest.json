@@ -1,0 +1,85 @@
+{
+  "manifest_version": 3,
+  "name": "Mockingword",
+  "version": "0.9.0",
+  "description": "Webページ・選択した文章・入力したテキストを、ブラウザー内のAIで日本語に翻訳します。翻訳内容を外部サーバーへ送信しません。",
+  "minimum_chrome_version": "124",
+  "permissions": [
+    "scripting",
+    "contextMenus",
+    "storage",
+    "offscreen",
+    "unlimitedStorage",
+    "alarms"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background/main.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "shared/theme-watch.js",
+        "page/watch.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "page/*.js",
+        "shared/*.js",
+        "icons/icon32.png"
+      ],
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ]
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  "cross_origin_opener_policy": {
+    "value": "same-origin"
+  },
+  "cross_origin_embedder_policy": {
+    "value": "require-corp"
+  },
+  "action": {
+    "default_title": "Mockingword",
+    "default_popup": "ui/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "commands": {
+    "translate-page": {
+      "suggested_key": {
+        "default": "Alt+T"
+      },
+      "description": "このページを訳す／原文と訳文を切り替える"
+    }
+  },
+  "options_page": "ui/options.html",
+  "homepage_url": "https://github.com/kagerouttepaso/Mockingword-browser"
+}

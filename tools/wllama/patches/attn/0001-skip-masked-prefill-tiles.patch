@@ -1,0 +1,84 @@
+diff --git a/llama.cpp/ggml/src/ggml-webgpu/wgsl-shaders/flash_attn_tile.wgsl b/llama.cpp/ggml/src/ggml-webgpu/wgsl-shaders/flash_attn_tile.wgsl
+--- a/llama.cpp/ggml/src/ggml-webgpu/wgsl-shaders/flash_attn_tile.wgsl
++++ b/llama.cpp/ggml/src/ggml-webgpu/wgsl-shaders/flash_attn_tile.wgsl
+@@ -28,6 +28,10 @@
+ 
+ var<workgroup> q_shmem: array<Q_TYPE, Q_TILE * HEAD_DIM_QK>;
+ var<workgroup> p_shmem: array<f16, Q_TILE * KV_TILE>;
++#ifdef MASK
++// 固定アドレスのu32へ集約し、subgroupやf16配列へのポインターに依存しない。
++var<workgroup> mask_tile_visible: atomic<u32>;
++#endif
+ 
+ @compute @workgroup_size(WG_SIZE)
+ fn main(@builtin(workgroup_id) wg_id: vec3<u32>,
+@@ -102,6 +106,34 @@
+ 
+     for (var kv_tile = 0u; kv_tile < params.seq_len_kv; kv_tile += KV_TILE) {
+         let kv_count = min(KV_TILE, params.seq_len_kv - kv_tile);
++#ifdef MASK
++        // 前タイルの全アクセスは末尾のbarrierまたはuniform loadで完了している。
++        if (local_id.x == 0u) {
++            atomicStore(&mask_tile_visible, select(1u, 0u, params.max_bias <= 0.0));
++        }
++        workgroupBarrier();
++        // ALiBiの演算は既存経路を使う。通常maskだけを厳密な-infで分類する。
++        if (params.max_bias <= 0.0) {
++            var lane_visible = false;
++            for (var elem = local_id.x; elem < Q_TILE * kv_count; elem += WG_SIZE) {
++                let q_row = elem / kv_count;
++                let k_rel = elem % kv_count;
++                if (q_row_start + q_row < params.seq_len_q) {
++                    let mask_idx = mask_global_offset + q_row * params.seq_len_kv + kv_tile + k_rel;
++                    let mask_bits = bitcast<u32>(vec2<f16>(mask[mask_idx], f16(0.0))) & 0xffffu;
++                    lane_visible = lane_visible || mask_bits != 0xfc00u;
++                }
++            }
++            if (lane_visible) {
++                atomicStore(&mask_tile_visible, 1u);
++            }
++        }
++        // whole-variable pointerのatomic<u32>を使い、workgroupで同じ結果を得る。
++        let tile_visible = workgroupUniformLoad(&mask_tile_visible);
++        if (tile_visible == 0u) {
++            continue;
++        }
++#endif
+         let score_slots = min(SCORE_REGS_PER_LANE, (kv_count + subgroup_size - 1u) / subgroup_size);
+         let out_slots = min(OUT_REGS_PER_LANE, (V_CHUNKS + subgroup_size - 1u) / subgroup_size);
+         var local_scores: array<f32, SCORE_REGS_PER_LANE>;
+diff --git a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
+--- a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
++++ b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
+@@ -3038,8 +3038,10 @@
+         key.common.v_direct &= decisions.use_sg_matrix && key.common.v_type == GGML_TYPE_F16;
+         key.use_sg_matrix = decisions.use_sg_matrix;
+ 
++        // tile版のmask分類に追加するatomic<u32>の4バイトを予約する。
+         uint32_t max_kv_tile = ggml_webgpu_flash_attn_max_kv_tile(
+-            context.wg_mem_limit_bytes, decisions.q_tile, decisions.use_sg_matrix ? context.sg_mat_n : 1u,
++            context.wg_mem_limit_bytes - (key.common.has_mask && !decisions.use_sg_matrix ? sizeof(uint32_t) : 0u),
++            decisions.q_tile, decisions.use_sg_matrix ? context.sg_mat_n : 1u,
+             key.common.head_dim_qk, key.common.head_dim_v, key.common.has_mask,
+             key.common.k_direct || key.common.v_direct);
+ 
+@@ -3053,7 +3055,8 @@
+             key.common.v_direct     = false;
+             key.use_sg_matrix       = false;
+             max_kv_tile             = ggml_webgpu_flash_attn_max_kv_tile(
+-                context.wg_mem_limit_bytes, decisions.q_tile, 1u, key.common.head_dim_qk, key.common.head_dim_v,
++                context.wg_mem_limit_bytes - (key.common.has_mask ? sizeof(uint32_t) : 0u),
++                decisions.q_tile, 1u, key.common.head_dim_qk, key.common.head_dim_v,
+                 key.common.has_mask, key.common.k_direct || key.common.v_direct);
+             GGML_ASSERT(max_kv_tile > 0);
+         }
+@@ -3080,6 +3083,9 @@
+         }
+ 
+         std::string              variant = decisions.use_sg_matrix ? "flash_attn" : "flash_attn_tile";
++        if (!decisions.use_sg_matrix && key.common.has_mask) {
++            variant += "_mask_skip";
++        }
+         std::vector<std::string> defines = ggml_webgpu_flash_attn_common_defines(key.common, variant, decisions.q_tile,
+                                                                                  decisions.kv_tile, decisions.wg_size);
+         const char *             shader_src = nullptr;

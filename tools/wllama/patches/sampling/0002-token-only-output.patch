@@ -1,0 +1,163 @@
+diff --git a/llama.cpp/common/common.h b/llama.cpp/common/common.h
+index 84abddc760..38a557b5ed 100644
+--- a/llama.cpp/common/common.h
++++ b/llama.cpp/common/common.h
+@@ -299,6 +299,8 @@ struct common_params_sampling {
+     bool                      reasoning_control = false;       // create the budget sampler on demand so reasoning can be ended at runtime
+ 
+     bool backend_sampling = false;
++    // 翻訳用の明示指定。条件を満たすときだけ候補の読み戻しを省略する。
++    bool backend_sampling_token_only = false;
+ 
+     // print the parameters into a string
+     std::string print() const;
+diff --git a/llama.cpp/common/sampling.cpp b/llama.cpp/common/sampling.cpp
+index 564fa9c4db..92e450e16e 100644
+--- a/llama.cpp/common/sampling.cpp
++++ b/llama.cpp/common/sampling.cpp
+@@ -188,6 +188,68 @@ std::string common_params_sampling::print() const {
+     return std::string(result);
+ }
+ 
++// chain の最後に置く出力制御。選択順序・候補・確率の計算には介入しない。
++static const char * token_only_name(const llama_sampler *) { return "token-only-output"; }
++static void token_only_apply(llama_sampler *, llama_token_data_array *) {}
++static bool token_only_backend_init(llama_sampler *, ggml_backend_buffer_type_t, uint32_t) { return true; }
++static void token_only_backend_apply(llama_sampler *, ggml_context *, ggml_cgraph *, llama_sampler_data * data) {
++    // 未対応 sampler がある場合は chain がここへ到達せず、従来の CPU fallback が働く。
++    if (data->sampled) {
++        data->logits = nullptr;
++        data->probs = nullptr;
++        data->candidates = nullptr;
++    }
++}
++static llama_sampler * token_only_init();
++static llama_sampler * token_only_clone(const llama_sampler *) { return token_only_init(); }
++static llama_sampler * token_only_init() {
++    static llama_sampler_i iface = {
++        /* .name              = */ token_only_name,
++        /* .accept            = */ nullptr,
++        /* .apply             = */ token_only_apply,
++        /* .reset             = */ nullptr,
++        /* .clone             = */ token_only_clone,
++        /* .free              = */ nullptr,
++        /* .backend_init      = */ token_only_backend_init,
++        /* .backend_accept    = */ nullptr,
++        /* .backend_apply     = */ token_only_backend_apply,
++        /* .backend_set_input = */ nullptr,
++        /* .backend_reset     = */ nullptr,
++        /* .copy_state        = */ nullptr,
++    };
++    return llama_sampler_init(&iface, nullptr);
++}
++
++static bool token_only_eligible(const common_params_sampling & p) {
++    if (!p.backend_sampling_token_only || !p.backend_sampling || p.n_probs != 0 ||
++        p.temp != 0.0f || p.dynatemp_range != 0.0f || p.mirostat != 0 ||
++        !p.grammar.empty() || p.grammar_lazy || !p.grammar_triggers.empty() ||
++        !p.preserved_tokens.empty() || !p.logit_bias.empty() ||
++        p.ignore_eos || p.penalty_repeat != 1.0f || p.penalty_freq != 0.0f || p.penalty_present != 0.0f ||
++        p.dry_multiplier != 0.0f || p.xtc_probability != 0.0f || p.typ_p != 1.0f ||
++        p.adaptive_target >= 0.0f || p.top_n_sigma > 0.0f || p.reasoning_budget_tokens >= 0 ||
++        p.reasoning_control || p.samplers.empty() || p.samplers.back() != COMMON_SAMPLER_TYPE_TEMPERATURE) {
++        return false;
++    }
++    for (const auto sampler : p.samplers) {
++        switch (sampler) {
++            case COMMON_SAMPLER_TYPE_PENALTIES:
++            case COMMON_SAMPLER_TYPE_DRY:
++            case COMMON_SAMPLER_TYPE_TOP_N_SIGMA:
++            case COMMON_SAMPLER_TYPE_TOP_K:
++            case COMMON_SAMPLER_TYPE_TYPICAL_P:
++            case COMMON_SAMPLER_TYPE_TOP_P:
++            case COMMON_SAMPLER_TYPE_MIN_P:
++            case COMMON_SAMPLER_TYPE_XTC:
++            case COMMON_SAMPLER_TYPE_TEMPERATURE:
++                break;
++            default:
++                return false;
++        }
++    }
++    return true;
++}
++
+ struct common_sampler * common_sampler_init(
+         const struct llama_model * model,
+         struct common_params_sampling & params) {
+@@ -419,6 +481,11 @@ struct common_sampler * common_sampler_init(
+         llama_sampler_chain_add(chain, smpl);
+     }
+ 
++    params.backend_sampling_token_only = token_only_eligible(params);
++    if (params.backend_sampling_token_only) {
++        llama_sampler_chain_add(chain, token_only_init());
++    }
++
+     if (grmr && params.backend_sampling) {
+         LOG_WRN("%s: backend sampling is not compatible with grammar, disabling\n", __func__);
+ 
+@@ -616,6 +683,16 @@ llama_token common_sampler_sample(struct common_sampler * gsmpl, struct llama_co
+     auto & chain = gsmpl->chain;
+     auto & cur_p = gsmpl->cur_p; // initialized by set_logits
+ 
++    // token だけの出力では logits を要求しない。部分的な offload は従来経路へ戻す。
++    if (gsmpl->params.backend_sampling_token_only && !grmr && !rbudget) {
++        id = llama_get_sampled_token_ith(ctx, idx);
++        if (id != LLAMA_TOKEN_NULL) {
++            gsmpl->cur.clear();
++            cur_p = { gsmpl->cur.data(), 0, -1, true };
++            return id;
++        }
++    }
++
+     gsmpl->set_logits(ctx, idx);
+ 
+     // Check if a backend sampler has already sampled a token in which case we
+diff --git a/llama.cpp/tools/server/server-context.cpp b/llama.cpp/tools/server/server-context.cpp
+index 78c8ef149a..9161e42855 100644
+--- a/llama.cpp/tools/server/server-context.cpp
++++ b/llama.cpp/tools/server/server-context.cpp
+@@ -2057,6 +2057,9 @@ private:
+ 
+         // initialize samplers
+         if (task.need_sampling()) {
++            // 候補を使う投機的デコードと、翻訳以外の専用タスクは従来経路を保つ。
++            task.params.sampling.backend_sampling_token_only &=
++                task.type == SERVER_TASK_TYPE_COMPLETION && !spec;
+             try {
+                 slot.smpl.reset(common_sampler_init(model_tgt, task.params.sampling));
+             } catch (std::exception & e) {
+diff --git a/llama.cpp/tools/server/server-schema.cpp b/llama.cpp/tools/server/server-schema.cpp
+index 0a14a96209..c61bea4122 100644
+--- a/llama.cpp/tools/server/server-schema.cpp
++++ b/llama.cpp/tools/server/server-schema.cpp
+@@ -189,6 +189,9 @@ std::vector<std::unique_ptr<field>> make_llama_cmpl_schema(const common_params &
+     add((new field_bool("backend_sampling", params.sampling.backend_sampling))
+         ->set_desc("Use backend sampling instead of llama.cpp sampling"));
+ 
++    add((new field_bool("backend_sampling_token_only", params.sampling.backend_sampling_token_only))
++        ->set_desc("Read only the selected token for eligible greedy backend sampling"));
++
+     add((new field_bool("post_sampling_probs", params.post_sampling_probs))
+         ->set_desc("Return probabilities of top n_probs tokens after applying the sampling chain"));
+ 
+diff --git a/llama.cpp/tools/server/server-task.cpp b/llama.cpp/tools/server/server-task.cpp
+index 4b2a8b2f7b..5236c528ca 100644
+--- a/llama.cpp/tools/server/server-task.cpp
++++ b/llama.cpp/tools/server/server-task.cpp
+@@ -82,6 +82,7 @@ json task_params::to_json(bool only_metrics) const {
+             {"timings_per_token",         timings_per_token},
+             {"post_sampling_probs",       post_sampling_probs},
+             {"backend_sampling",          sampling.backend_sampling},
++            {"backend_sampling_token_only", sampling.backend_sampling_token_only},
+             {"lora",                      lora},
+         };
+     }
+@@ -141,6 +142,7 @@ json task_params::to_json(bool only_metrics) const {
+         {"timings_per_token",         timings_per_token},
+         {"post_sampling_probs",       post_sampling_probs},
+         {"backend_sampling",          sampling.backend_sampling},
++        {"backend_sampling_token_only", sampling.backend_sampling_token_only},
+         {"lora",                      lora},
+     };
+ }

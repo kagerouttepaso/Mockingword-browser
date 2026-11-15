@@ -1,0 +1,56 @@
+H8: Q4_K/Q6_Kの最大8列で重みを共有する。0001の後に適用。
+
+diff --git a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
+index 91ce8b2..7efccbc 100644
+--- a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
++++ b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
+@@ -1779,10 +1779,11 @@ static void ggml_webgpu_append_mmvq_columns(webgpu_context &
+                                             std::vector<webgpu_dispatch_desc> & dispatches) {
+     ggml_tensor src1_view = *src1;
+     src1_view.ne[1]       = columns;
+-    src1_view.ne[2]       = batches;
++    // shader選択用viewは列数だけを表し、実行時のbatch数はuniformで渡す。
++    src1_view.ne[2]       = 1;
+     ggml_tensor dst_view  = *dst;
+     dst_view.ne[1]        = columns;
+-    dst_view.ne[2]        = batches;
++    dst_view.ne[2]        = 1;
+ 
+     ggml_webgpu_shader_lib_context shader_lib_ctx = context;
+     shader_lib_ctx.src1 = &src1_view;
+@@ -1858,13 +1859,16 @@ static webgpu_encoded_op ggml_webgpu_mul_mat(webgpu_context & ctx,
+     if (!use_mat_vec && use_mmvq) {
+         std::vector<webgpu_dispatch_desc> dispatches;
+         ggml_webgpu_quantize_q8_dispatch(ctx, src0, src1, dst, dispatches);
+-        const uint32_t batches = (uint32_t) dst->ne[1] / GGML_WEBGPU_MUL_MAT_VEC_MAX_ROWS;
+-        const uint32_t rest    = (uint32_t) dst->ne[1] % GGML_WEBGPU_MUL_MAT_VEC_MAX_ROWS;
+-        ggml_webgpu_append_mmvq_columns(ctx, shader_lib_ctx, src0, src1, dst, GGML_WEBGPU_MUL_MAT_VEC_MAX_ROWS,
+-                                        batches, 0, dispatches);
++        // K量子化の8列を同じworkgroupで積み、4列ごとの重みの再読込みを省く。
++        const uint32_t max_columns = (src0->type == GGML_TYPE_Q4_K || src0->type == GGML_TYPE_Q6_K) ?
++                                         8u : GGML_WEBGPU_MUL_MAT_VEC_MAX_ROWS;
++        const uint32_t columns = std::min<uint32_t>((uint32_t) dst->ne[1], max_columns);
++        const uint32_t batches = (uint32_t) dst->ne[1] / columns;
++        const uint32_t rest    = (uint32_t) dst->ne[1] % columns;
++        ggml_webgpu_append_mmvq_columns(ctx, shader_lib_ctx, src0, src1, dst, columns, batches, 0, dispatches);
+         if (rest > 0) {
+             ggml_webgpu_append_mmvq_columns(ctx, shader_lib_ctx, src0, src1, dst, rest, 1,
+-                                            batches * GGML_WEBGPU_MUL_MAT_VEC_MAX_ROWS, dispatches);
++                                            batches * columns, dispatches);
+         }
+         return ggml_backend_webgpu_build_multi(ctx, dispatches);
+     }
+diff --git a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
+index ff13331..8b5b443 100644
+--- a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
++++ b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
+@@ -2268,6 +2268,9 @@ class ggml_webgpu_shader_lib {
+         if (key.vectorized) {
+             variant += "_vectorized";
+         }
++        if (key.use_mmvq && key.num_cols > GGML_WEBGPU_MUL_MAT_VEC_MAX_ROWS) {
++            variant += "_cols" + std::to_string(key.num_cols);
++        }
+         defines.push_back(std::string("NUM_COLS=") + std::to_string(key.num_cols));
+ 
+         auto processed            = preprocessor.preprocess(shader_src, defines);

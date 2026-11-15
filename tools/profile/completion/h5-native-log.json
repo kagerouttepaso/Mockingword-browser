@@ -1,0 +1,6 @@
+{
+  "backend_sampling": true,
+  "backend_sampling_token_only": true,
+  "cache_prompt": false,
+  "samplers": ["temperature"]
+}

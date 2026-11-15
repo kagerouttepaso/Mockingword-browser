@@ -1,0 +1,195 @@
+diff --git a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
+index fc163df..acc55f8 100644
+--- a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
++++ b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
+@@ -9,6 +9,7 @@
+ #include <webgpu/webgpu_cpp.h>
+ 
+ #include <algorithm>
++#include <cstdint>
+ #include <memory>
+ #include <string>
+ #include <unordered_map>
+@@ -1040,10 +1041,13 @@ struct ggml_webgpu_mul_mat_pipeline_key {
+     int       vectorized;
+     int       use_subgroup_matrix;
+     bool      src_overlap;
++    uint32_t  small_n_tile; // 0: existing tile, otherwise the per-thread N tile (3..8)
++    bool      small_n_m4;   // short output dimension, long reduction: expose more M workgroups
+ 
+     bool operator==(const ggml_webgpu_mul_mat_pipeline_key & other) const {
+         return src0_type == other.src0_type && src1_type == other.src1_type && vectorized == other.vectorized &&
+-               use_subgroup_matrix == other.use_subgroup_matrix && src_overlap == other.src_overlap;
++               use_subgroup_matrix == other.use_subgroup_matrix && src_overlap == other.src_overlap &&
++               small_n_tile == other.small_n_tile && small_n_m4 == other.small_n_m4;
+     }
+ };
+ 
+@@ -1055,6 +1059,8 @@ struct ggml_webgpu_mul_mat_pipeline_key_hash {
+         ggml_webgpu_hash_combine(seed, key.vectorized);
+         ggml_webgpu_hash_combine(seed, key.use_subgroup_matrix);
+         ggml_webgpu_hash_combine(seed, key.src_overlap);
++        ggml_webgpu_hash_combine(seed, key.small_n_tile);
++        ggml_webgpu_hash_combine(seed, key.small_n_m4);
+         return seed;
+     }
+ };
+@@ -1262,6 +1268,7 @@ class ggml_webgpu_shader_lib {
+         group_norm_pipelines;
+ 
+     wgpu::Device           device;
++    wgpu::Instance         instance;
+     pre_wgsl::Preprocessor preprocessor;
+ 
+     std::unordered_map<int, webgpu_pipeline> sum_rows_pipelines;       // key is whether to compute the mean
+@@ -1353,7 +1360,38 @@ class ggml_webgpu_shader_lib {
+         upscale_pipelines;
+ 
+   public:
+-    ggml_webgpu_shader_lib(wgpu::Device device) { this->device = device; }
++    ggml_webgpu_shader_lib(wgpu::Device device, wgpu::Instance instance,
++                          uint32_t wg_mem_limit_bytes, bool supports_subgroup_matrix) :
++        device(device), instance(instance) {
++        // A sync creation returns a handle before the device timeline is ready. Complete
++        // every new short-N pipeline here, before the backend/model can be used to translate.
++        if (!supports_subgroup_matrix && wg_mem_limit_bytes >= 16384u) {
++            warm_kquant_small_n_pipelines(wg_mem_limit_bytes);
++        }
++    }
++
++    void warm_kquant_small_n_pipelines(uint32_t wg_mem_limit_bytes) {
++        ggml_tensor src0 = {}, src1 = {}, dst = {};
++        src1.type = dst.type = GGML_TYPE_F32;
++        src0.ne[2] = src0.ne[3] = src1.ne[2] = src1.ne[3] = dst.ne[2] = dst.ne[3] = 1;
++        ggml_webgpu_shader_lib_context warm = {};
++        warm.src0 = &src0;
++        warm.src1 = &src1;
++        warm.dst = &dst;
++        warm.wg_mem_limit_bytes = wg_mem_limit_bytes;
++        for (const auto type : { GGML_TYPE_Q4_K, GGML_TYPE_Q6_K }) {
++            src0.type = type;
++            src0.ne[0] = src1.ne[0] = ggml_blck_size(type);
++            for (const int64_t m : { src0.ne[0], 2 * src0.ne[0] }) {
++                src0.ne[1] = dst.ne[0] = m;
++                const uint32_t max_tile = m <= src0.ne[0] ? 8u : 7u;
++                for (uint32_t tn = 3u; tn <= max_tile; ++tn) {
++                    src1.ne[1] = dst.ne[1] = tn * WEBGPU_MUL_MAT_WG_SIZE_N;
++                    get_mul_mat_fast_pipeline(warm, false);
++                }
++            }
++        }
++    }
+ 
+     webgpu_pipeline get_count_equal_pipeline(bool src_overlap) {
+         const int key = src_overlap;
+@@ -2303,6 +2341,26 @@ class ggml_webgpu_shader_lib {
+         key.use_subgroup_matrix = context.supports_subgroup_matrix;
+         key.src_overlap         = src_overlap;
+ 
++        // One N tile only: trimming padding must not re-read/dequantize the weights.
++        // Keep the MMVQ range, batched/expert matrices and large prefill unchanged.
++        const bool flat = context.src0->ne[2] == 1 && context.src0->ne[3] == 1 &&
++                          context.src1->ne[2] == 1 && context.src1->ne[3] == 1;
++        const int64_t n = context.dst->ne[1];
++        // Eager preparation covers exactly F32 activations with separate weight/input bindings.
++        // Other source/layout combinations keep the existing kernel, with no new cold variants.
++        const bool small_n_family = !key.use_subgroup_matrix && flat && !src_overlap &&
++            key.src1_type == GGML_TYPE_F32 && context.wg_mem_limit_bytes >= 16384u &&
++            (key.src0_type == GGML_TYPE_Q4_K || key.src0_type == GGML_TYPE_Q6_K) &&
++            context.src0->ne[0] % 64 == 0 && context.dst->ne[0] % 64 == 0;
++        if (small_n_family && n > GGML_WEBGPU_MMVQ_MAX_ROWS && n <= 8 * WEBGPU_MUL_MAT_WG_SIZE_N) {
++            const uint32_t tile_n = (uint32_t) ((n + WEBGPU_MUL_MAT_WG_SIZE_N - 1) / WEBGPU_MUL_MAT_WG_SIZE_N);
++            // For M <= K the output side supplies few workgroups for a long reduction.
++            // Halve M per group without duplicating weight elements across groups.
++            // Wide output projections keep m8 and its better shared-memory reuse.
++            key.small_n_m4 = context.dst->ne[0] <= context.src0->ne[0];
++            key.small_n_tile = tile_n < 8u || key.small_n_m4 ? tile_n : 0u;
++        }
++
+         auto it = mul_mat_fast_pipelines.find(key);
+         if (it != mul_mat_fast_pipelines.end()) {
+             return it->second;
+@@ -2413,14 +2471,14 @@ class ggml_webgpu_shader_lib {
+         if (!key.use_subgroup_matrix &&
+             (key.src0_type == GGML_TYPE_Q4_K || key.src0_type == GGML_TYPE_Q6_K) &&
+             context.wg_mem_limit_bytes >= 12288u) {
+-            tile_n = 8u;
++            tile_n = key.small_n_tile ? key.small_n_tile : 8u;
+             tile_k = 64u;
+-            variant += "_n8k64";
++            variant += "_n" + std::to_string(tile_n) + "k64";
+             // 1スレッドの受け持ちを4x8から8x8へ広げ、積和1回あたりの共有メモリーの読出しを12/32から16/64へ減らす。
+             // 共有メモリーは16KBで、WebGPUが全deviceに保証する上限16384バイトに収まる。GPU名では分けない。
+             if (context.wg_mem_limit_bytes >= 16384u) {
+-                tile_m = 8u;
+-                variant += "_m8";
++                tile_m = key.small_n_m4 ? 4u : 8u;
++                variant += "_m" + std::to_string(tile_m);
+             }
+         }
+ 
+@@ -2478,7 +2536,9 @@ class ggml_webgpu_shader_lib {
+             decisions->mul_mat_wg_size = WEBGPU_MUL_MAT_WG_SIZE;
+         }
+ 
+-        webgpu_pipeline pipeline    = ggml_webgpu_create_pipeline(device, processed, variant);
++        webgpu_pipeline pipeline = key.small_n_tile ?
++            ggml_webgpu_create_pipeline_ready(device, instance, processed, variant) :
++            ggml_webgpu_create_pipeline(device, processed, variant);
+         pipeline.context            = decisions;
+         mul_mat_fast_pipelines[key] = pipeline;
+         return mul_mat_fast_pipelines[key];
+@@ -3681,6 +3741,37 @@ class ggml_webgpu_shader_lib {
+     }
+ 
+   private:
++    static webgpu_pipeline ggml_webgpu_create_pipeline_ready(wgpu::Device & device,
++                                                             wgpu::Instance & instance,
++                                                             const std::string & shader_code,
++                                                             const std::string & label) {
++        wgpu::ShaderSourceWGSL shader_source;
++        shader_source.code = shader_code.c_str();
++        wgpu::ShaderModuleDescriptor shader_desc;
++        shader_desc.nextInChain = &shader_source;
++        wgpu::ComputePipelineDescriptor desc;
++        desc.label = label.c_str();
++        desc.compute.module = device.CreateShaderModule(&shader_desc);
++        desc.compute.entryPoint = "main";
++        desc.layout = nullptr;
++        wgpu::ComputePipeline ready;
++        std::string error;
++        const auto future = device.CreateComputePipelineAsync(
++            &desc, wgpu::CallbackMode::WaitAnyOnly,
++            [&](wgpu::CreatePipelineAsyncStatus status, wgpu::ComputePipeline pipeline, wgpu::StringView message) {
++                if (status == wgpu::CreatePipelineAsyncStatus::Success) {
++                    ready = pipeline;
++                } else {
++                    error = std::string(message);
++                }
++            });
++        const auto waited = instance.WaitAny(future, UINT64_MAX);
++        if (waited != wgpu::WaitStatus::Success || ready == nullptr) {
++            GGML_ABORT("ggml_webgpu: short-N pipeline '%s' was not ready: %s", label.c_str(), error.c_str());
++        }
++        return { ready, label };
++    }
++
+     static webgpu_pipeline ggml_webgpu_create_pipeline(wgpu::Device & device,
+                                                        std::string    shader_code,
+                                                        std::string    label) {
+diff --git a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
+index 80cef41..b863985 100644
+--- a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
++++ b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
+@@ -4860,7 +4860,10 @@ static webgpu_context initialize_webgpu_context(ggml_backend_dev_t dev) {
+     ggml_backend_webgpu_device_context * dev_ctx    = (ggml_backend_webgpu_device_context *) dev->context;
+     webgpu_context                       webgpu_ctx = std::make_shared<webgpu_context_struct>();
+     webgpu_ctx->global_ctx                          = dev_ctx->webgpu_global_ctx;
+-    webgpu_ctx->shader_lib = std::make_unique<ggml_webgpu_shader_lib>(dev_ctx->webgpu_global_ctx->device);
++    webgpu_ctx->shader_lib = std::make_unique<ggml_webgpu_shader_lib>(
++        dev_ctx->webgpu_global_ctx->device, dev_ctx->webgpu_global_ctx->instance,
++        dev_ctx->webgpu_global_ctx->capabilities.limits.maxComputeWorkgroupStorageSize,
++        dev_ctx->webgpu_global_ctx->capabilities.supports_subgroup_matrix);
+     webgpu_ctx->param_arena.init(
+         webgpu_ctx->global_ctx->device, WEBGPU_PARAMS_BUF_SIZE_BYTES,
+         webgpu_ctx->global_ctx->command_submit_batch_size + WEBGPU_NUM_PARAM_SLOT_SAFETY_MARGIN,

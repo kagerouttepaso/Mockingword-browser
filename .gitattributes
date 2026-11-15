@@ -1,0 +1,15 @@
+* text=auto eol=lf
+*.js text eol=lf
+*.mjs text eol=lf
+*.py text eol=lf
+*.json text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.md text eol=lf
+*.patch text eol=lf
+*.png binary
+*.wasm binary
+
+# パッチの空白は変更対象の文脈なので保持する。
+*.patch -whitespace
+*.diff -whitespace

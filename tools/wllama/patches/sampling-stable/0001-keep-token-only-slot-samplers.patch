@@ -1,0 +1,93 @@
+diff --git a/llama.cpp/tools/server/server-context.cpp b/llama.cpp/tools/server/server-context.cpp
+index 9161e42..6a6f662 100644
+--- a/llama.cpp/tools/server/server-context.cpp
++++ b/llama.cpp/tools/server/server-context.cpp
+@@ -393,6 +393,7 @@ struct server_slot {
+     json json_schema;
+ 
+     common_sampler_ptr smpl;
++    bool token_only_sampler = false; // attached across idle periods; owned by this slot
+ 
+     llama_token sampled; // in speculative mode, this is the last accepted token
+ 
+@@ -453,7 +454,11 @@ struct server_slot {
+ 
+         n_predict_max = -1;
+ 
+-        llama_set_sampler(ctx_tgt, id, nullptr);
++        // The idle sequence has no outputs, so keeping its sampler adds no GPU work.
++        // Retain both ownership and registration: removing either invalidates the reserved graph.
++        if (!token_only_sampler) {
++            llama_set_sampler(ctx_tgt, id, nullptr);
++        }
+ 
+         // clear alora start
+         alora_invocation_start = -1;
+@@ -1550,6 +1555,20 @@ private:
+             };
+ 
+             slot.reset();
++
++            // Reserve all translation samplers together before the first request.  Attaching
++            // only the busy slots would still reserve when a previously idle slot is first used.
++            // Common init has already warmed the model; this changes no request defaults.
++            if (!spec && !mctx && !params_base.embedding) {
++                common_params_sampling sampling;
++                sampling.samplers = { COMMON_SAMPLER_TYPE_TEMPERATURE };
++                sampling.temp = 0.0f;
++                sampling.backend_sampling = true;
++                sampling.backend_sampling_token_only = true;
++                slot.smpl.reset(common_sampler_init(model_tgt, sampling));
++                slot.token_only_sampler = sampling.backend_sampling_token_only &&
++                    llama_set_sampler(ctx_tgt, slot.id, common_sampler_get(slot.smpl.get()));
++            }
+         }
+ 
+         {
+@@ -2060,8 +2079,9 @@ private:
+             // 候補を使う投機的デコードと、翻訳以外の専用タスクは従来経路を保つ。
+             task.params.sampling.backend_sampling_token_only &=
+                 task.type == SERVER_TASK_TYPE_COMPLETION && !spec;
++            common_sampler_ptr next_sampler;
+             try {
+-                slot.smpl.reset(common_sampler_init(model_tgt, task.params.sampling));
++                next_sampler.reset(common_sampler_init(model_tgt, task.params.sampling));
+             } catch (std::exception & e) {
+                 std::string err_msg = std::string("Failed to initialize samplers: ") + e.what();
+                 send_error(task, err_msg, ERROR_TYPE_INVALID_REQUEST);
+@@ -2078,11 +2098,22 @@ private:
+             // TODO: check verify if this actually works with TTS
+             use_backend_sampling &= task.type != SERVER_TASK_TYPE_TTS;
+ 
+-            // TODO: tmp until backend sampling is fully implemented
+-            if (use_backend_sampling) {
+-                llama_set_sampler(ctx_tgt, slot.id, common_sampler_get(slot.smpl.get()));
+-            } else {
++            // common_sampler_init clears token_only when its strict eligibility check fails.
++            // Reuse only the extension's exact temperature-only chain.  Its greedy choice has
++            // no RNG/penalty/grammar state; init_sampler() resets the request history as usual.
++            const bool token_only = use_backend_sampling && task.params.sampling.backend_sampling_token_only &&
++                task.params.sampling.samplers.size() == 1 &&
++                task.params.sampling.samplers[0] == COMMON_SAMPLER_TYPE_TEMPERATURE;
++            if (!(token_only && slot.token_only_sampler)) {
++                // Unregister before freeing the old chain.  Other sampling requests retain
++                // their own sampler and the original reserve/fallback behavior.
+                 llama_set_sampler(ctx_tgt, slot.id, nullptr);
++                slot.token_only_sampler = false;
++                slot.smpl = std::move(next_sampler);
++                if (use_backend_sampling) {
++                    const bool attached = llama_set_sampler(ctx_tgt, slot.id, common_sampler_get(slot.smpl.get()));
++                    slot.token_only_sampler = token_only && attached;
++                }
+             }
+ 
+             SLT_TRC(slot, "sampler chain: %s\n", common_sampler_print(slot.smpl.get()).c_str());
+@@ -2095,6 +2126,8 @@ private:
+                 slot.spec_synth_rng.seed(seed);
+             }
+         } else {
++            llama_set_sampler(ctx_tgt, slot.id, nullptr);
++            slot.token_only_sampler = false;
+             slot.smpl.reset();
+         }
+ 

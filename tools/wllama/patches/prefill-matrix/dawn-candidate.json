@@ -1,0 +1,8 @@
+{
+  "tag": "v20260818.211311",
+  "url": "https://github.com/google/dawn/releases/download/v20260818.211311/emdawnwebgpu_pkg-v20260818.211311.zip",
+  "sha256": "ff3e535c5facf4d820e6c393e06e26493ebd8d35649f972899e6048250efce29",
+  "release": "https://github.com/google/dawn/releases/tag/v20260818.211311",
+  "assetDigests": "https://github.com/google/dawn/releases/expanded_assets/v20260818.211311",
+  "releaseTestedEmsdk": "5.0.6"
+}

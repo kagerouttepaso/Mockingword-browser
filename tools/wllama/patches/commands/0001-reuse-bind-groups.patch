@@ -1,0 +1,111 @@
+固定版 7d7f028: backend ごとに bind group を再利用する。
+
+sakutto scripts/wllama/patches/0004-webgpu-reuse-bind-groups.patch のキー構築を移植。
+Copyright (c) 2026 jammaru / MIT（README.md の MIT 本文を参照）。
+
+diff --git a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
+--- a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
++++ b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
+@@ -29,6 +29,7 @@
+ #include <mutex>
+ #include <optional>
+ #include <string>
++#include <unordered_map>
+ #include <utility>
+ #include <vector>
+ 
+@@ -206,6 +207,9 @@
+     wgpu::Buffer    set_tensor_n_src_buf;
+     wgpu::Buffer    set_tensor_n_descs_buf;
+     webgpu_pipeline set_tensor_n_pipeline;
++
++    // tensor バッファー解放後の handle 再利用を、各 backend のキャッシュへ伝える。
++    std::atomic<uint64_t> buffer_generation{0};
+ 
+     std::string vendor;
+ 
+@@ -268,6 +272,10 @@
+     wgpu::ComputePassEncoder active_compute_pass;
+     bool                     batch_compute_passes = true;
+ 
++    // pipeline と param arena の寿命に合わせ、backend ごとに保持する。
++    std::unordered_map<std::string, wgpu::BindGroup> bind_group_cache;
++    uint64_t bind_group_cache_generation = 0;
++
+ #ifdef GGML_WEBGPU_GPU_PROFILE
+     // Profiling: per-shader GPU time in ms
+     std::unordered_map<std::string, double> shader_gpu_time_ms;
+@@ -278,6 +286,8 @@
+ #endif
+ 
+     ~webgpu_context_struct() {
++        // arena・pipeline・SET_ROWS バッファーの破棄より先に参照を解放する。
++        bind_group_cache.clear();
+ #ifdef GGML_WEBGPU_GPU_PROFILE
+         if (this->profile_timestamp_host_buf) {
+             this->profile_timestamp_host_buf.Destroy();
+@@ -598,6 +608,12 @@
+     std::vector<size_t>          param_offsets;
+     result.num_kernels = dispatches.size();
+ 
++    const uint64_t generation = ctx->global_ctx->buffer_generation.load(std::memory_order_acquire);
++    if (ctx->bind_group_cache_generation != generation) {
++        ctx->bind_group_cache.clear();
++        ctx->bind_group_cache_generation = generation;
++    }
++
+     for (size_t i = 0; i < dispatches.size(); i++) {
+         const webgpu_dispatch_desc & dispatch     = dispatches[i];
+         const size_t                 param_size   = dispatch.params.size() * sizeof(uint32_t);
+@@ -608,12 +624,37 @@
+         entries.push_back(ggml_webgpu_make_bind_group_entry(params_binding_num, ctx->param_arena.buffer, param_offset,
+                                                             ctx->param_arena.slot_size));
+ 
+-        wgpu::BindGroupDescriptor bind_group_desc;
+-        bind_group_desc.layout     = dispatch.pipeline.pipeline.GetBindGroupLayout(0);
+-        bind_group_desc.entryCount = entries.size();
+-        bind_group_desc.entries    = entries.data();
+-        bind_group_desc.label      = dispatch.pipeline.name.c_str();
+-        bind_groups.push_back(ctx->global_ctx->device.CreateBindGroup(&bind_group_desc));
++        // パディングを含む構造体全体を hash せず、buffer binding の値だけをキーにする。
++        std::string key;
++        key.reserve(sizeof(WGPUComputePipeline) + entries.size() *
++                    (sizeof(uint32_t) + sizeof(WGPUBuffer) + 2 * sizeof(uint64_t)));
++        const WGPUComputePipeline pipeline_handle = dispatch.pipeline.pipeline.Get();
++        key.append(reinterpret_cast<const char *>(&pipeline_handle), sizeof(pipeline_handle));
++        for (const wgpu::BindGroupEntry & entry : entries) {
++            const WGPUBuffer buffer_handle = entry.buffer.Get();
++            const uint64_t offset = entry.offset;
++            const uint64_t size   = entry.size;
++            key.append(reinterpret_cast<const char *>(&entry.binding), sizeof(entry.binding));
++            key.append(reinterpret_cast<const char *>(&buffer_handle), sizeof(buffer_handle));
++            key.append(reinterpret_cast<const char *>(&offset), sizeof(offset));
++            key.append(reinterpret_cast<const char *>(&size), sizeof(size));
++        }
++
++        auto & cache = ctx->bind_group_cache;
++        auto cached  = cache.find(key);
++        if (cached == cache.end()) {
++            // 可変長 KV や異なる graph での増加を、backend あたり4096件に制限する。
++            if (cache.size() >= 4096) {
++                cache.clear();
++            }
++            wgpu::BindGroupDescriptor bind_group_desc;
++            bind_group_desc.layout     = dispatch.pipeline.pipeline.GetBindGroupLayout(0);
++            bind_group_desc.entryCount = entries.size();
++            bind_group_desc.entries    = entries.data();
++            bind_group_desc.label      = dispatch.pipeline.name.c_str();
++            cached = cache.emplace(std::move(key), ctx->global_ctx->device.CreateBindGroup(&bind_group_desc)).first;
++        }
++        bind_groups.push_back(cached->second);
+         param_offsets.push_back(param_offset);
+     }
+ 
+@@ -3915,6 +3956,7 @@
+ static void ggml_backend_webgpu_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+     ggml_backend_webgpu_buffer_context * ctx = static_cast<ggml_backend_webgpu_buffer_context *>(buffer->context);
+     if (ctx != nullptr && ctx->buffer != nullptr) {
++        ctx->global_ctx->buffer_generation.fetch_add(1, std::memory_order_release);
+         ctx->buffer.Destroy();
+         delete ctx;
+     }

@@ -1,0 +1,92 @@
+diff --git a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
+index fc163df..5175c93 100644
+--- a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
++++ b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
+@@ -1040,10 +1040,13 @@ struct ggml_webgpu_mul_mat_pipeline_key {
+     int       vectorized;
+     int       use_subgroup_matrix;
+     bool      src_overlap;
++    uint32_t  small_n_tile; // 0: existing tile, otherwise the per-thread N tile (3..8)
++    bool      small_n_m4;   // short output dimension, long reduction: expose more M workgroups
+ 
+     bool operator==(const ggml_webgpu_mul_mat_pipeline_key & other) const {
+         return src0_type == other.src0_type && src1_type == other.src1_type && vectorized == other.vectorized &&
+-               use_subgroup_matrix == other.use_subgroup_matrix && src_overlap == other.src_overlap;
++               use_subgroup_matrix == other.use_subgroup_matrix && src_overlap == other.src_overlap &&
++               small_n_tile == other.small_n_tile && small_n_m4 == other.small_n_m4;
+     }
+ };
+ 
+@@ -1055,6 +1058,8 @@ struct ggml_webgpu_mul_mat_pipeline_key_hash {
+         ggml_webgpu_hash_combine(seed, key.vectorized);
+         ggml_webgpu_hash_combine(seed, key.use_subgroup_matrix);
+         ggml_webgpu_hash_combine(seed, key.src_overlap);
++        ggml_webgpu_hash_combine(seed, key.small_n_tile);
++        ggml_webgpu_hash_combine(seed, key.small_n_m4);
+         return seed;
+     }
+ };
+@@ -2303,6 +2308,44 @@ class ggml_webgpu_shader_lib {
+         key.use_subgroup_matrix = context.supports_subgroup_matrix;
+         key.src_overlap         = src_overlap;
+ 
++        // One N tile only: trimming padding must not re-read/dequantize the weights.
++        // Keep the MMVQ range, batched/expert matrices and large prefill unchanged.
++        const bool flat = context.src0->ne[2] == 1 && context.src0->ne[3] == 1 &&
++                          context.src1->ne[2] == 1 && context.src1->ne[3] == 1;
++        const int64_t n = context.dst->ne[1];
++        const bool small_n_family = !key.use_subgroup_matrix && flat && context.wg_mem_limit_bytes >= 16384u &&
++            (key.src0_type == GGML_TYPE_Q4_K || key.src0_type == GGML_TYPE_Q6_K) &&
++            context.src0->ne[0] % 64 == 0 && context.dst->ne[0] % 64 == 0;
++        if (small_n_family && n > GGML_WEBGPU_MMVQ_MAX_ROWS && n <= 8 * WEBGPU_MUL_MAT_WG_SIZE_N) {
++            const uint32_t tile_n = (uint32_t) ((n + WEBGPU_MUL_MAT_WG_SIZE_N - 1) / WEBGPU_MUL_MAT_WG_SIZE_N);
++            // For M <= K the output side supplies few workgroups for a long reduction.
++            // Halve M per group without duplicating weight elements across groups.
++            // Wide output projections keep m8 and its better shared-memory reuse.
++            key.small_n_m4 = context.dst->ne[0] <= context.src0->ne[0];
++            key.small_n_tile = tile_n < 8u || key.small_n_m4 ? tile_n : 0u;
++        }
++
++        // Model warmup uses large N. Compile this shape family's short-N pipelines there,
++        // so the first short paragraph does not pay for each new shader during translation.
++        // This only creates pipelines; it does not dispatch a kernel or change tensor data.
++        if (small_n_family && n > 8 * WEBGPU_MUL_MAT_WG_SIZE_N) {
++            auto probe = key;
++            probe.small_n_m4 = context.dst->ne[0] <= context.src0->ne[0];
++            probe.small_n_tile = 3u;
++            if (mul_mat_fast_pipelines.find(probe) == mul_mat_fast_pipelines.end()) {
++                ggml_tensor src1_view = *context.src1;
++                ggml_tensor dst_view = *context.dst;
++                ggml_webgpu_shader_lib_context warm = context;
++                warm.src1 = &src1_view;
++                warm.dst = &dst_view;
++                const uint32_t max_tile = probe.small_n_m4 ? 8u : 7u;
++                for (uint32_t tn = 3u; tn <= max_tile; ++tn) {
++                    src1_view.ne[1] = dst_view.ne[1] = tn * WEBGPU_MUL_MAT_WG_SIZE_N;
++                    get_mul_mat_fast_pipeline(warm, src_overlap);
++                }
++            }
++        }
++
+         auto it = mul_mat_fast_pipelines.find(key);
+         if (it != mul_mat_fast_pipelines.end()) {
+             return it->second;
+@@ -2413,14 +2456,14 @@ class ggml_webgpu_shader_lib {
+         if (!key.use_subgroup_matrix &&
+             (key.src0_type == GGML_TYPE_Q4_K || key.src0_type == GGML_TYPE_Q6_K) &&
+             context.wg_mem_limit_bytes >= 12288u) {
+-            tile_n = 8u;
++            tile_n = key.small_n_tile ? key.small_n_tile : 8u;
+             tile_k = 64u;
+-            variant += "_n8k64";
++            variant += "_n" + std::to_string(tile_n) + "k64";
+             // 1スレッドの受け持ちを4x8から8x8へ広げ、積和1回あたりの共有メモリーの読出しを12/32から16/64へ減らす。
+             // 共有メモリーは16KBで、WebGPUが全deviceに保証する上限16384バイトに収まる。GPU名では分けない。
+             if (context.wg_mem_limit_bytes >= 16384u) {
+-                tile_m = 8u;
+-                variant += "_m8";
++                tile_m = key.small_n_m4 ? 4u : 8u;
++                variant += "_m" + std::to_string(tile_m);
+             }
+         }
+ 

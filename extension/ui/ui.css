@@ -1,0 +1,47 @@
+@import url('../shared/theme.css');
+/* Android版と同じ色の役割を全画面で使う。外部フォントは取得しない。 */
+:root{color-scheme:var(--mw-color-scheme);--fg:var(--mw-on-surface);--muted:var(--mw-on-surface-variant);--bg:var(--mw-surface);--panel:var(--mw-surface-container-low);--line:var(--mw-outline-variant);--accent:var(--mw-primary)}
+*{box-sizing:border-box}
+body{font:14px/1.65 "Segoe UI","Noto Sans JP","Meiryo",system-ui,sans-serif;color:var(--fg);background:var(--bg)}
+button,select,textarea,input{font:inherit;color:inherit}
+button,select{background:var(--mw-surface-container);border:1px solid var(--mw-outline);border-radius:12px;padding:7px 13px;cursor:pointer}
+button{min-height:36px;transition:background .12s,border-color .12s}
+button:hover:not(:disabled){border-color:var(--mw-primary);background:var(--mw-primary-container);color:var(--mw-on-primary-container)}
+button:disabled{opacity:.5;cursor:default}
+button.primary{background:var(--mw-primary);border-color:var(--mw-primary);color:var(--mw-on-primary)}
+button.primary:hover:not(:disabled){filter:brightness(.94)}
+button:focus-visible,select:focus-visible,textarea:focus-visible,a:focus-visible,input:focus-visible{outline:2px solid var(--mw-tertiary);outline-offset:3px}
+input[type=checkbox],input[type=radio]{accent-color:var(--mw-primary)}
+a{color:var(--mw-tertiary)}
+.brand{display:flex;align-items:center;gap:9px;font-size:22px;font-weight:700;letter-spacing:-.6px;line-height:1.3}
+.brand img{width:40px;height:40px;flex:none}
+.brand-word{color:var(--mw-primary)}
+.screen-title{font-size:14px;letter-spacing:0;color:var(--mw-on-surface-variant);font-weight:500;margin-left:12px;border-left:1px solid var(--line);padding-left:16px}
+body.mw-popup{width:340px;padding:18px;max-height:600px;overflow-y:auto}
+.mw-popup h1.brand{font-size:21px;margin:0 0 18px}
+.mw-popup .row{gap:8px}.mw-popup .stack{gap:8px}.mw-popup hr{margin:16px 0}
+.mw-popup #text{background:var(--mw-tertiary-container);color:var(--mw-on-tertiary-container);border-color:transparent}
+.mw-popup #status{margin-top:12px;margin-bottom:12px}
+body.mw-settings{margin:32px auto;max-width:780px;padding:0 24px 40px}
+.mw-settings h1.brand{margin:0 0 18px}
+.mw-settings fieldset{border:1px solid var(--line);background:var(--mw-surface-container-low);border-radius:20px;padding:16px 20px 20px;margin-bottom:20px;min-width:0}
+.mw-settings legend{font-weight:600;color:var(--mw-primary);padding:0 8px;font-size:15px}
+.mw-settings label{padding:3px 0}.mw-settings h3{color:var(--mw-on-surface)}
+.mw-settings #status,.mw-settings .tune-box{border:1px solid var(--line);border-radius:12px;background:var(--mw-surface-container)}
+.mw-settings small{color:var(--mw-on-surface-variant)}
+body.mw-text{padding:24px}
+.mw-text header{margin-bottom:20px;gap:12px}
+.mw-text h1.brand{font-size:22px}
+.mw-text .panes{gap:20px}
+.mw-text .pane{background:var(--mw-surface-container-low);border-radius:20px;overflow:hidden;border-color:var(--line);min-height:max(320px,calc(100vh - 116px))}
+.mw-text .pane:first-child{border-top:3px solid var(--mw-primary)}
+.mw-text .pane:last-child{border-top:3px solid var(--mw-secondary)}
+.mw-text .pane-head{padding:10px 14px;background:var(--mw-surface-container)}
+.mw-text .pane:last-child .pane-head{color:var(--mw-secondary)}
+.mw-text textarea,.mw-text #output{padding:22px;font-size:17px;line-height:1.9}
+.mw-text #output:not(.placeholder){color:var(--mw-on-surface)}
+.mw-text .pane-foot{padding:8px 16px}
+@media(max-width:720px){body.mw-text{padding:16px}.mw-text .panes{gap:16px}.screen-title{margin-left:4px;padding-left:10px}}
+@media(prefers-reduced-motion:reduce){button{transition:none}}
+
+.mw-text .pane-head{flex-wrap:wrap}.mw-text .pane-head .grow{min-width:120px}

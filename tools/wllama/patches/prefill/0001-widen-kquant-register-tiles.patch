@@ -1,0 +1,46 @@
+diff --git a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
+--- a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
++++ b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
+@@ -2388,9 +2388,21 @@
+             tile_k = is_quant ? WEBGPU_MUL_MAT_REG_TILE_K_QUANT : WEBGPU_MUL_MAT_REG_TILE_K_FLOAT;
+         }
+ 
++        uint32_t tile_n = WEBGPU_MUL_MAT_TILE_N;
++        // Q4_K/Q6_Kのprefillでは、32x64出力を64要素ずつ積む。
++        // 重みの再読込みとbarrierを減らす。MMVQとsubgroup matrixの契約は保つ。
++        // 選択は型とdevice固定値だけで決め、既存のpipeline cache keyと一致させる。
++        if (!key.use_subgroup_matrix &&
++            (key.src0_type == GGML_TYPE_Q4_K || key.src0_type == GGML_TYPE_Q6_K) &&
++            context.wg_mem_limit_bytes >= 12288u) {
++            tile_n = 8u;
++            tile_k = 64u;
++            variant += "_n8k64";
++        }
++
+         // Tiles
+         defines.push_back("TILE_M=" + std::to_string(WEBGPU_MUL_MAT_TILE_M) + "u");
+-        defines.push_back("TILE_N=" + std::to_string(WEBGPU_MUL_MAT_TILE_N) + "u");
++        defines.push_back("TILE_N=" + std::to_string(tile_n) + "u");
+ 
+         // Subgroup matrix specifics
+         if (key.use_subgroup_matrix) {
+@@ -2427,7 +2439,7 @@
+         auto decisions                 = std::make_shared<ggml_webgpu_mul_mat_shader_decisions>();
+         decisions->tile_k              = tile_k;
+         decisions->tile_m              = WEBGPU_MUL_MAT_TILE_M;
+-        decisions->tile_n              = WEBGPU_MUL_MAT_TILE_N;
++        decisions->tile_n              = tile_n;
+         decisions->use_subgroup_matrix = key.use_subgroup_matrix;
+         if (key.use_subgroup_matrix) {
+             decisions->subgroup_m        = WEBGPU_MUL_MAT_SUBGROUP_M;
+diff --git a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
+--- a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
++++ b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
+@@ -1698,6 +1698,7 @@
+     shader_lib_ctx.src1                     = src1;
+     shader_lib_ctx.dst                      = dst;
+     shader_lib_ctx.max_wg_size              = ctx->global_ctx->capabilities.limits.maxComputeInvocationsPerWorkgroup;
++    shader_lib_ctx.wg_mem_limit_bytes       = ctx->global_ctx->capabilities.limits.maxComputeWorkgroupStorageSize;
+     shader_lib_ctx.supports_subgroups       = ctx->global_ctx->capabilities.supports_subgroups;
+     shader_lib_ctx.supports_subgroup_matrix = ctx->global_ctx->capabilities.supports_subgroup_matrix;
+     shader_lib_ctx.sg_mat_m                 = ctx->global_ctx->capabilities.sg_mat_m;

@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>Mockingwordの設定</title>
+  <link rel="stylesheet" href="ui.css">
+  <style>
+    body { margin: 24px; max-width: 680px; }
+    fieldset { border: 1px solid var(--line); border-radius: 6px; margin: 0 0 16px; padding: 8px 16px 12px; }
+    legend { font-weight: bold; padding: 0 4px; }
+    label { display: block; }
+    label.inline { display: inline-flex; align-items: center; gap: 6px; margin: 6px 0; }
+    select { margin: 4px 0; }
+    #status { padding: 8px 12px; border-radius: 6px; background: var(--panel); display: flex; align-items: center; gap: 8px; }
+    #status span { flex: 1; }
+    small { color: var(--muted); }
+    h3 { font-size: 1em; margin: 14px 0 4px; }
+    .tune-box { margin-top: 8px; padding: 8px 12px; border-radius: 6px; background: var(--panel); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .tune-box > span:first-child { flex: 1 1 280px; }
+    .tune-box .buttons { display: flex; gap: 6px; }
+    #tunerows { margin-top: 8px; border-collapse: collapse; width: 100%; font-size: 0.92em; }
+    #tunerows th, #tunerows td { border-bottom: 1px solid var(--line); padding: 3px 6px; text-align: left; }
+    #tunerows tr.best td { font-weight: bold; }
+  </style>
+<script type="module" src="theme.js"></script>
+</head>
+<body class="mw-settings">
+  <h1 class="brand"><img src="../icons/icon48.png" alt=""><span>Mocking<span class="brand-word">word</span></span><span class="screen-title">設定</span></h1>
+  <p><small>翻訳はすべてブラウザーの中（WebGPU か CPU）で行い、ページの文章は外へ出ません。モデルは初回だけ Hugging Face から取得して、拡張機能の中に保存します。</small></p>
+
+  <fieldset>
+    <legend>画面の色</legend>
+    <label>テーマ
+      <select id="theme" name="theme">
+        <option value="system">端末に合わせる</option>
+        <option value="light">ライト（さえずりの紙）</option>
+        <option value="dark">ダーク（夜の鳥）</option>
+      </select>
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>翻訳モデル</legend>
+    <label><input type="radio" name="model" value="0.8B"> 0.8B（既定。速い。初回に約570MBを取得）</label>
+    <label><input type="radio" name="model" value="2B"> 2B（訳が正確。慣用句や口語の取り違えが少ない。約3倍遅い。初回に約1.8GBを取得）</label>
+    <small>ボタンのメニューからも切り替えられます。訳したページで切り替えると、新しいモデルで訳し直します。</small>
+  </fieldset>
+
+  <fieldset>
+    <legend>このPCの性能に合わせる</legend>
+    <small>この欄の設定はPCごとに保存し、ほかのPCへ同期しません（内蔵GPUのPCと単体GPUのPCで合う値が違うため）。
+      変えると、読み込んでいるモデルを解放し、次に訳すときに新しい設定で読み込みます。</small>
+    <div class="tune-box">
+      <span id="tunestate">「このPCに合わせる」を押すと、設定を変えながら同じ文章を訳して時間を比べ、いちばん速い設定を保存します（今のモデルで1〜4分。測っている間はPCを操作しないでください。0.8Bと2Bで合う値が違うので、モデルを替えたら合わせ直してください）。</span>
+      <span class="buttons"><button id="tune">このPCに合わせる</button><button id="tunestop" hidden>途中でやめる</button><button id="speed">今の設定で測る</button></span>
+    </div>
+    <table id="tunerows" hidden>
+      <thead><tr><th>設定</th><th>24まとまりを訳す時間（控えなし）</th><th>最初の1まとまり</th><th>生成の速さ</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <h3>動作モード</h3>
+    <label><input type="radio" name="device" value="auto"> 自動（GPU が使えれば GPU、読み込めなければ CPU）</label>
+    <label><input type="radio" name="device" value="gpu"> GPU（WebGPU）</label>
+    <label><input type="radio" name="device" value="cpu"> CPU</label>
+    <small>使う GPU：<span id="adapter">確認中…</span></small>
+    <h3>細かい調整</h3>
+    <label class="inline">同時に訳す本数 <select name="parallel" id="parallel"></select></label>
+    <br><small>ページの翻訳で同時にモデルへ送るまとまりの数です。GPU の性能に余裕があるほど、多くすると全体が速くなります。多すぎると1本ずつが遅くなり、画面内が出るまでが延びます。</small>
+    <br><label class="inline">GPU へ一度に渡す量（ubatch） <select name="ubatch" id="ubatch"></select></label>
+    <br><small>原文を読み込むときに GPU へまとめて渡すトークン数です。単体GPUでは大きくすると速くなることがあり、内蔵GPUではメモリーを多く使うだけのことがあります。</small>
+    <br><label class="inline">CPU のスレッド数 <select name="threads" id="threads"></select></label>
+    <br><small>このPCは論理コア <span id="cores"></span> 個です。CPU で動かすとき（自動で CPU になったときを含む）に使います。</small>
+  </fieldset>
+
+  <fieldset>
+    <legend>メモリーの解放</legend>
+    <label class="inline">使わない時間が
+      <select name="idleMinutes" id="idleMinutes">
+        <option value="5">5分</option>
+        <option value="10">10分</option>
+        <option value="30">30分</option>
+        <option value="60">60分</option>
+        <option value="0">（解放しない）</option>
+      </select>
+      続いたら、モデルを解放する</label>
+    <br><small>解放した後は、次に訳すときに読み込み直します（保存済みのモデルから数秒）。</small>
+    <div id="status"><span>確認中…</span><button id="unload">今すぐ解放</button></div>
+    <div id="cache" style="margin-top: 8px; padding: 8px 12px; border-radius: 6px; background: var(--panel); display: flex; align-items: center; gap: 8px;">
+      <span id="cachestats" style="flex: 1;">訳の控え：確認中…</span>
+      <button id="cacheclear">控えを消す</button>
+    </div>
+    <small>訳の控えは、一度訳した文と訳文の組です。同じ文はモデルを使わずすぐ出します。最大2万件で、超えると古く使ったものから消します。</small>
+  </fieldset>
+
+  <fieldset>
+    <legend>訳文の文体</legend>
+    <label><input type="radio" name="form" value="polite"> です・ます</label>
+    <label><input type="radio" name="form" value="plain"> だ・である</label>
+  </fieldset>
+
+  <fieldset>
+    <legend>ページの翻訳：原文の言語</legend>
+    <select name="source" id="source"></select>
+    <br><small>既定の「自動」では、PLaMoが扱う52言語（日本語を除く）を段落ごとにモデルが判定して訳します。
+      自動で訳が崩れるページだけ、言語を決めてください。テキスト翻訳の言語は、そのページで選びます。</small>
+  </fieldset>
+
+  <fieldset>
+    <legend>選択範囲の翻訳</legend>
+    <label><input type="checkbox" name="selectionIcon"> 文章を選んだら鳥のアイコンを出す（押すと選択範囲の訳を吹き出しで出す）</label>
+    <small>日本語（かな）を含む選択や、入力欄の中の選択には出しません。右クリックの「選択範囲を日本語に訳す」はこの設定によらず使えます。</small>
+  </fieldset>
+
+  <fieldset>
+    <legend>ページの翻訳：訳したときの表示</legend>
+    <label><input type="radio" name="mode" value="trans"> 訳文だけ（原文と置き換える）</label>
+    <label><input type="radio" name="mode" value="both"> 原文と訳文を並べる</label>
+    <small>Alt+T（またはボタンのメニューの「このページを訳す」）をもう一度押すと原文に戻り、さらに押すとこの表示に戻ります。</small>
+  </fieldset>
+
+  <fieldset>
+    <legend>調査用のログ</legend>
+    <label><input type="checkbox" name="debugLog" id="debugLog"> ログを残す（ページ・裏方・モデルの出来事を時刻付きで記録する）</label>
+    <small>翻訳が遅い・止まるときにオンにして同じ操作をし、「ログを保存」したファイルを確認してください。記録はこのブラウザーの中だけにあり、
+      ブラウザーを閉じるか拡張機能を読み込み直すと消えます。ページの文は先頭60字だけを残します。</small>
+    <div id="logbox" style="margin-top: 8px; display: flex; gap: 8px; align-items: center;">
+      <span id="logcount" style="flex: 1;"></span>
+      <button id="logsave">ログを保存</button>
+      <button id="logclear">消去</button>
+    </div>
+  </fieldset>
+
+<fieldset><legend>Mockingwordについて</legend><p>Built with PLaMo</p><p><small>個人開発の非公式ソフトウェアです。Preferred Networksとは関係ありません。PLaMo™はPreferred Networksの商標です。</small></p><p><a href="privacy.html" target="_blank">プライバシーポリシー</a> · <a href="licenses.html" target="_blank">ライセンスと利用条件</a> · <a href="https://github.com/kagerouttepaso/Mockingword-browser/issues" target="_blank" rel="noreferrer">問い合わせ</a></p></fieldset>
+  <script src="options.js" type="module"></script>
+</body>
+</html>

@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  アプリのアイコン「水面に映る訳」。名前の Mockingword（mockingbird＝ほかの鳥の歌をまねる鳥 ＋ word）を1つの絵にした。
+  マネシツグミが、コーラルの水面（自分の言葉＝原文）にとまり、水面に映った逆さの姿が、ミントの文字の行（訳）になっている。
+  映り込みの行は、逆さにして縦に縮めた鳥の輪郭に沿った長さで、少しずつ左右にずらして水面の揺れを出す。いちばん下の短い行が逆さの頭に当たる。
+  色はデザイン言語「夜の鳥」の役割どおり（コーラル＝自分・話すこと、ミント＝相手と訳、鳥は月明かりの文字色、翼は補助の空色）。
+  鳥は丸い切り抜きの安全な範囲（中心から半径33）に、くちばしの先と頭が収まる大きさにし、遠目でも鳥と分かるようにした。
+  判断の経緯は docs/判断/2026-11-13_アプリのアイコンを水面に映る訳の鳥にする.md。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 映り込み＝訳の行 -->
+    <path
+        android:pathData="M33.7,67.7 H55.9 M41.9,72.9 H63.5 M44.8,78.1 H64.3 M49.3,83.3 H71.7 M52.2,88.5 H63.7"
+        android:strokeWidth="3"
+        android:strokeColor="#FF7FE0C8"
+        android:strokeLineCap="round" />
+    <!-- 水面＝原文の行（端から端まで） -->
+    <path
+        android:pathData="M0,63 H108"
+        android:strokeWidth="3.2"
+        android:strokeColor="#FFFF8A65" />
+    <!-- 水面にとまるマネシツグミ -->
+    <group
+        android:translateX="8.28"
+        android:translateY="4.52"
+        android:scaleX="0.86"
+        android:scaleY="0.86">
+        <path
+            android:pathData="M50,62 V68 M56,60 V68"
+            android:strokeWidth="2.79"
+            android:strokeColor="#FFE8EAF6" />
+        <path
+            android:fillColor="#FFE8EAF6"
+            android:pathData="M81,31 L70,33 C69,26 63,22 57,22.5 C50,23 46,28 45,34 C43,42 38,49 33,55 L23,65 L29,69 L41,64 C50,65 59,61 63,54 C67,47 68,41 69,37 Z" />
+        <!-- 翼 -->
+        <path
+            android:fillColor="#FFA9B8FF"
+            android:pathData="M52,37 C58,42 58,52 50,58 L37,63 C40,52 44,42 52,37 Z" />
+        <!-- 目 -->
+        <path
+            android:fillColor="#FF141A30"
+            android:pathData="M57.09,30 A2.91,2.91 0 1 0 62.91,30 A2.91,2.91 0 1 0 57.09,30 Z" />
+    </group>
+</vector>

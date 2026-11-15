@@ -1,0 +1,20 @@
+diff --git a/cpp/wllama-context.h b/cpp/wllama-context.h
+--- a/cpp/wllama-context.h
++++ b/cpp/wllama-context.h
+@@ -1444,8 +1444,14 @@ struct wllama_context
+     }
+     server_response_reader &rd = *it->second;
+ 
+-    run_loop();
+-    auto [result, is_error] = get_next_result(rd);
++    // 未読の結果を先に返し、結果を待つ場合だけ全スロットの生成を進める。
++    auto pending_result = get_next_result(rd);
++    if (!pending_result.first)
++    {
++      run_loop();
++      pending_result = get_next_result(rd);
++    }
++    auto [result, is_error] = std::move(pending_result);
+     // the task queue can be empty while the request is still streaming, keep polling until we get the stop result
+     const bool has_more = rd.has_next();
+ 

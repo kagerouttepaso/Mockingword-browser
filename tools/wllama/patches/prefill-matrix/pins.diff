@@ -1,0 +1,16 @@
+diff --git a/tools/wllama/pins.json b/tools/wllama/pins.json
+--- a/tools/wllama/pins.json
++++ b/tools/wllama/pins.json
+@@ -22,9 +22,9 @@
+     "npmVersion": "11.16.0"
+   },
+   "dawn": {
+-    "tag": "v20260317.182325",
+-    "url": "https://github.com/google/dawn/releases/download/v20260317.182325/emdawnwebgpu_pkg-v20260317.182325.zip",
+-    "sha256": "8dcae86c630d76b6794b271c6572becba36f4237d132bee121a56638c3d76575"
++    "tag": "v20260818.211311",
++    "url": "https://github.com/google/dawn/releases/download/v20260818.211311/emdawnwebgpu_pkg-v20260818.211311.zip",
++    "sha256": "ff3e535c5facf4d820e6c393e06e26493ebd8d35649f972899e6048250efce29"
+   },
+   "distribution": {
+     "indexSha256": "fffd95c16ca191f31f4303664a05189c43d0cb20c52b67276c04e8857b138b64",

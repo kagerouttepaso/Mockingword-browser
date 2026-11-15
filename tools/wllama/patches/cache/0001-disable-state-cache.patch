@@ -1,0 +1,14 @@
+diff --git a/cpp/wllama-context.h b/cpp/wllama-context.h
+index 820c27c..e308e6e 100644
+--- a/cpp/wllama-context.h
++++ b/cpp/wllama-context.h
+@@ -786,6 +786,9 @@ struct wllama_context
+       params.flash_attn_type = req.flash_attn.value ? LLAMA_FLASH_ATTN_TYPE_AUTO : LLAMA_FLASH_ATTN_TYPE_DISABLED;
+     if (req.swa_full.not_null())
+       params.swa_full = req.swa_full.value;
++    // 翻訳で再利用しない状態の GPU 読取りを省く。明示された checkpoint 指定は後で適用する。
++    params.cache_ram_mib = 0;
++    params.n_ctx_checkpoints = 0;
+     if (req.n_ctx_checkpoints.not_null())
+       params.n_ctx_checkpoints = req.n_ctx_checkpoints.value;
+     if (req.checkpoint_min_step.not_null())

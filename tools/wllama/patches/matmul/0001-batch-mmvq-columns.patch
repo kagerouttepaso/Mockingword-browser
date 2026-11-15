@@ -1,0 +1,165 @@
+5行以上（既定16行まで）の平坦な行列積を4列単位の MMVQ に分割する。
+
+出典: sakutto 73ed0476ed420714131587774b523fae4d61c2c2 scripts/wllama/patches/0004-webgpu-reuse-bind-groups.patch
+MIT License, Copyright (c) 2026 jammaru。ライセンス全文は README.md。
+固定版: wllama 6647c1e / llama.cpp 7d7f028。
+
+diff --git a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
+index 92ec03fbe5..ff13331c47 100644
+--- a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
++++ b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp
+@@ -20,6 +20,8 @@
+ #define GGML_WEBGPU_FLASH_ATTN_PREFERRED_KV_SG_TILES 8u
+ #define GGML_WEBGPU_FLASH_ATTN_VEC_MAX_SEQ_LEN       20u
+ #define GGML_WEBGPU_MUL_MAT_VEC_MAX_ROWS             4
++#define GGML_WEBGPU_MMVQ_MAX_ROWS                    16
++static_assert(GGML_WEBGPU_MMVQ_MAX_ROWS >= GGML_WEBGPU_MUL_MAT_VEC_MAX_ROWS);
+ #define GGML_WEBGPU_FLASH_ATTN_VEC_MAX_KV_TILE       32u
+ #define GGML_WEBGPU_FLASH_ATTN_TILE_MAX_KV_TILE      64u
+ #define GGML_WEBGPU_FLASH_ATTN_PREFERRED_WG_SIZE     128u
+@@ -1214,12 +1216,17 @@ struct ggml_webgpu_soft_max_pipeline_key_hash {
+ 
+ /** MMVQ **/
+ 
++inline int64_t ggml_webgpu_mmvq_max_rows(const ggml_tensor * src0, const ggml_tensor * src1) {
++    const bool flat = src0->ne[2] == 1 && src0->ne[3] == 1 && src1->ne[2] == 1 && src1->ne[3] == 1;
++    return flat ? GGML_WEBGPU_MMVQ_MAX_ROWS : GGML_WEBGPU_MUL_MAT_VEC_MAX_ROWS;
++}
++
+ inline bool ggml_webgpu_can_use_mmvq(const ggml_tensor * src0,
+                                      const ggml_tensor * src1,
+                                      int64_t             n_rows,
+                                      bool                supports_dot_product,
+                                      const std::string & vendor) {
+-    if (n_rows <= GGML_WEBGPU_MUL_MAT_VEC_MAX_ROWS) {
++    if (n_rows <= ggml_webgpu_mmvq_max_rows(src0, src1)) {
+         bool supports_dp4a = vendor == "amd" || vendor == "intel" || vendor == "nvidia";
+         if (supports_dp4a && supports_dot_product) {
+             switch (src1->type) {
+diff --git a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
+index 31a713bc1a..4d24d2d581 100644
+--- a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
++++ b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
+@@ -1681,6 +1681,66 @@ static void ggml_webgpu_quantize_q8_dispatch(webgpu_context &
+     });
+ }
+ 
++// q8 scratch は全列分の量子化が済んでおり、first_column は q8_1 ブロック数へ変換する。
++static void ggml_webgpu_append_mmvq_columns(webgpu_context &                    ctx,
++                                            const ggml_webgpu_shader_lib_context & context,
++                                            ggml_tensor *                       src0,
++                                            ggml_tensor *                       src1,
++                                            ggml_tensor *                       dst,
++                                            uint32_t                            columns,
++                                            uint32_t                            batches,
++                                            uint32_t                            first_column,
++                                            std::vector<webgpu_dispatch_desc> & dispatches) {
++    ggml_tensor src1_view = *src1;
++    src1_view.ne[1]       = columns;
++    src1_view.ne[2]       = batches;
++    ggml_tensor dst_view  = *dst;
++    dst_view.ne[1]        = columns;
++    dst_view.ne[2]        = batches;
++
++    ggml_webgpu_shader_lib_context shader_lib_ctx = context;
++    shader_lib_ctx.src1 = &src1_view;
++    shader_lib_ctx.dst  = &dst_view;
++
++    webgpu_pipeline pipeline  = ctx->shader_lib->get_mul_mat_vec_pipeline(shader_lib_ctx, false);
++    auto *          decisions = static_cast<ggml_webgpu_mul_mat_vec_shader_decisions *>(pipeline.context.get());
++
++    const uint32_t        m      = (uint32_t) dst->ne[0];
++    std::vector<uint32_t> params = {
++        (uint32_t) (ggml_webgpu_tensor_misalignment(ctx, src0) / ggml_type_size(src0->type)),
++        first_column * (uint32_t) (src0->ne[0] / 32),
++        (uint32_t) (ggml_webgpu_tensor_misalignment(ctx, dst) / ggml_type_size(dst->type)) + first_column * m,
++        m,
++        columns,
++        (uint32_t) src0->ne[0],
++        (uint32_t) (src0->nb[1] / ggml_type_size(src0->type)),
++        (uint32_t) (src1->nb[1] / ggml_type_size(src1->type)),
++        (uint32_t) (src0->nb[2] / ggml_type_size(src0->type)),
++        columns * (uint32_t) (src1->nb[1] / ggml_type_size(src1->type)),
++        (uint32_t) (src0->nb[3] / ggml_type_size(src0->type)),
++        (uint32_t) (src1->nb[3] / ggml_type_size(src1->type)),
++        1,
++        1,
++        batches,
++        1,
++    };
++
++    const auto &                      q8_entry = dispatches[0].bind_group_entries[1];
++    std::vector<wgpu::BindGroupEntry> entries  = {
++        ggml_webgpu_make_tensor_bind_group_entry(ctx, 0, src0),
++        ggml_webgpu_make_bind_group_entry(1, ggml_webgpu_tensor_buf(dst), q8_entry.offset, q8_entry.size),
++        ggml_webgpu_make_tensor_bind_group_entry(ctx, 2, dst),
++    };
++
++    uint32_t wg_x = 1;
++    uint32_t wg_y = 1;
++    compute_2d_workgroups(CEIL_DIV(m, decisions->outputs_per_wg) * batches,
++                          ctx->global_ctx->capabilities.limits.maxComputeWorkgroupsPerDimension, wg_x, wg_y);
++    dispatches.push_back({
++        pipeline, std::move(params), std::move(entries), { wg_x, wg_y }
++    });
++}
++
+ static webgpu_encoded_op ggml_webgpu_mul_mat(webgpu_context & ctx,
+                                              ggml_tensor *    src0,
+                                              ggml_tensor *    src1,
+@@ -1708,6 +1768,21 @@ static webgpu_encoded_op ggml_webgpu_mul_mat(webgpu_context & ctx,
+     shader_lib_ctx.supports_dot_product     = ctx->global_ctx->capabilities.supports_dot_product;
+     shader_lib_ctx.vendor                   = ctx->global_ctx->vendor;
+ 
++    // 4列単位では重みの読取りを共有し、端数だけを別の dispatch にする。
++    if (!use_mat_vec && use_mmvq) {
++        std::vector<webgpu_dispatch_desc> dispatches;
++        ggml_webgpu_quantize_q8_dispatch(ctx, src0, src1, dst, dispatches);
++        const uint32_t batches = (uint32_t) dst->ne[1] / GGML_WEBGPU_MUL_MAT_VEC_MAX_ROWS;
++        const uint32_t rest    = (uint32_t) dst->ne[1] % GGML_WEBGPU_MUL_MAT_VEC_MAX_ROWS;
++        ggml_webgpu_append_mmvq_columns(ctx, shader_lib_ctx, src0, src1, dst, GGML_WEBGPU_MUL_MAT_VEC_MAX_ROWS,
++                                        batches, 0, dispatches);
++        if (rest > 0) {
++            ggml_webgpu_append_mmvq_columns(ctx, shader_lib_ctx, src0, src1, dst, rest, 1,
++                                            batches * GGML_WEBGPU_MUL_MAT_VEC_MAX_ROWS, dispatches);
++        }
++        return ggml_backend_webgpu_build_multi(ctx, dispatches);
++    }
++
+     // Get or create pipeline
+     webgpu_pipeline                   pipeline;
+     std::vector<webgpu_dispatch_desc> dispatches;
+@@ -1723,7 +1798,7 @@ static webgpu_encoded_op ggml_webgpu_mul_mat(webgpu_context & ctx,
+     }
+ 
+     uint32_t offset_src0   = (uint32_t) (ggml_webgpu_tensor_misalignment(ctx, src0) / ggml_type_size(src0->type));
+-    uint32_t offset_src1   = (uint32_t) (ggml_webgpu_tensor_misalignment(ctx, src1) / ggml_type_size(src1->type));
++    uint32_t offset_src1   = use_mmvq ? 0 : (uint32_t) (ggml_webgpu_tensor_misalignment(ctx, src1) / ggml_type_size(src1->type));
+     size_t   merged_offset = 0;
+     size_t   merged_size   = 0;
+     if (src_overlap) {
+@@ -4419,9 +4494,8 @@ static size_t ggml_backend_webgpu_buffer_type_get_alloc_size(ggml_backend_buffer
+                 const ggml_tensor * src0 = tensor->src[0];
+                 const ggml_tensor * src1 = tensor->src[1];
+ 
+-                // the q8 copy of src1 grows with its rows, so a longer batch reserves the copy of the longest
+-                // mmvq batch and the size stays monotonic in the batch length
+-                const int64_t n_rows   = std::min<int64_t>(src1->ne[1], GGML_WEBGPU_MUL_MAT_VEC_MAX_ROWS);
++                // tiled 経路でも最大 MMVQ 行数分を残し、長いバッチの予約領域で短いバッチを処理できるようにする。
++                const int64_t n_rows   = std::min<int64_t>(src1->ne[1], ggml_webgpu_mmvq_max_rows(src0, src1));
+                 const bool    use_mmvq = ggml_webgpu_can_use_mmvq(
+                     src0, src1, n_rows, ctx->webgpu_global_ctx->capabilities.supports_dot_product,
+                     ctx->webgpu_global_ctx->vendor);
+diff --git a/llama.cpp/ggml/src/ggml-webgpu/wgsl-shaders/mul_mat_vec.wgsl b/llama.cpp/ggml/src/ggml-webgpu/wgsl-shaders/mul_mat_vec.wgsl
+index 1781a6c791..de084c2546 100644
+--- a/llama.cpp/ggml/src/ggml-webgpu/wgsl-shaders/mul_mat_vec.wgsl
++++ b/llama.cpp/ggml/src/ggml-webgpu/wgsl-shaders/mul_mat_vec.wgsl
+@@ -101,7 +101,7 @@ fn main(
+     let dst_idx_base = params.offset_dst + dst3_idx * dst3_stride + dst2_idx * dst2_stride + row_base;
+ 
+ #ifdef MMVQ
+-    let src1q_idx_base = (src13_idx * params.bs02 * params.broadcast2 + src12_idx) * params.n * (params.k / 32u);
++    let src1q_idx_base = params.offset_src1 + (src13_idx * params.bs02 * params.broadcast2 + src12_idx) * params.n * (params.k / 32u);
+     let acc = accumulate_vec_q_dot(thread_id, row_base, src0_batch_offset, src1q_idx_base);
+ #else
+     let src1_idx_base = params.offset_src1 + src13_idx * params.stride_13 + src12_idx * params.stride_12;

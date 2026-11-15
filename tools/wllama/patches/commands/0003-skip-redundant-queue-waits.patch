@@ -1,0 +1,173 @@
+0001 + 0002 適用後: 成功済み queue wait の重複と、同期読取り直前の待ちを削減。
+
+synchronize の完了保証は保持する。公開 API と event 待ちは変更しない。
+
+diff --git a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
+--- a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
++++ b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
+@@ -224,6 +224,22 @@
+     wgpu::Buffer         get_tensor_staging_buf;
+     // Global mutex for get_tensor
+     std::recursive_mutex mutex;
++
++    // true の初期値は、初回 synchronize でも従来の完了確認を保つため。
++    // queue への投入と完了確認を同じ mutex で直列化する。
++    bool queue_has_pending_work = true;
++
++    void write_buffer(const wgpu::Buffer & buffer, uint64_t offset, const void * data, size_t size) {
++        std::lock_guard<std::recursive_mutex> lock(mutex);
++        queue_has_pending_work = true;
++        queue.WriteBuffer(buffer, offset, data, size);
++    }
++
++    void submit(size_t count, const wgpu::CommandBuffer * commands) {
++        std::lock_guard<std::recursive_mutex> lock(mutex);
++        queue_has_pending_work = true;
++        queue.Submit(count, commands);
++    }
+ 
+     wgpu::Buffer    memset_params_buf;
+     webgpu_pipeline memset_pipeline;
+@@ -562,6 +578,10 @@
+ }
+ 
+ static void ggml_backend_webgpu_wait_queue(webgpu_global_context & ctx) {
++    std::lock_guard<std::recursive_mutex> lock(ctx->mutex);
++    if (!ctx->queue_has_pending_work) {
++        return;
++    }
+     wgpu::QueueWorkDoneStatus callback_status = wgpu::QueueWorkDoneStatus::Error;
+     std::string               callback_message;
+ 
+@@ -576,6 +596,9 @@
+ 
+     ggml_backend_webgpu_check_wait_status(wait_status, callback_status, wgpu::QueueWorkDoneStatus::Success,
+                                           "Queue wait", "Queue work", callback_message.c_str());
++    // 成功した queue 全体の待ちだけで完了状態を更新する。
++    // MapAsync は対象 buffer の保証なので、ここで代用しない。
++    ctx->queue_has_pending_work = false;
+ }
+ 
+ static void ggml_backend_webgpu_map_buffer(webgpu_global_context & ctx,
+@@ -606,8 +629,10 @@
+         num_inflight_batches = 0;
+     }
+ 
++    // flush と Submit の間に synchronize が割り込まないようにする。
++    std::lock_guard<std::recursive_mutex> lock(ctx->global_ctx->mutex);
+     ctx->param_arena.flush(ctx->global_ctx->queue);
+-    ctx->global_ctx->queue.Submit(1, &commands);
++    ctx->global_ctx->submit(1, &commands);
+     num_inflight_batches++;
+ }
+ 
+@@ -619,7 +644,7 @@
+     wgpu::CommandEncoder encoder = ctx->device.CreateCommandEncoder();
+     encoder.CopyBufferToBuffer(ctx->debug_dev_buf, 0, ctx->debug_host_buf, 0, ctx->debug_host_buf.GetSize());
+     wgpu::CommandBuffer commands = encoder.Finish();
+-    ctx->queue.Submit(1, &commands);
++    ctx->submit(1, &commands);
+     ggml_backend_webgpu_map_buffer(ctx, ctx->debug_host_buf, wgpu::MapMode::Read, 0, ctx->debug_host_buf.GetSize());
+     const float * debug_data = (const float *) ctx->debug_host_buf.GetConstMappedRange();
+     std::cout << "debug[0]: " << debug_data[0] << "\n";
+@@ -761,7 +786,7 @@
+         uint32_t                          total_wg = CEIL_DIV(n_values, max_wg_size);
+         compute_2d_workgroups(total_wg, ctx->capabilities.limits.maxComputeWorkgroupsPerDimension, wg_x, wg_y);
+ 
+-        ctx->queue.WriteBuffer(ctx->memset_params_buf, 0, params.data(), params.size() * sizeof(uint32_t));
++        ctx->write_buffer(ctx->memset_params_buf, 0, params.data(), params.size() * sizeof(uint32_t));
+ 
+         wgpu::BindGroupEntry params_entry = {};
+         params_entry.binding              = 1;
+@@ -786,7 +811,7 @@
+ 
+         wgpu::CommandBuffer              command  = encoder.Finish();
+         std::vector<wgpu::CommandBuffer> commands = { command };
+-        ctx->queue.Submit(commands.size(), commands.data());
++        ctx->submit(commands.size(), commands.data());
+ 
+         offset += chunk_size;
+         size -= chunk_size;
+@@ -3927,7 +3952,7 @@
+     size_t total_offset = ggml_webgpu_tensor_offset(tensor) + offset;
+ 
+     // Write aligned portion
+-    buf_ctx->global_ctx->queue.WriteBuffer(buf_ctx->buffer, total_offset, data, (size / 4) * 4);
++    buf_ctx->global_ctx->write_buffer(buf_ctx->buffer, total_offset, data, (size / 4) * 4);
+ 
+     if (size % 4 != 0) {
+         // If size is not a multiple of 4, we need to memset the remaining bytes
+@@ -3945,6 +3970,17 @@
+     }
+ }
+ 
++static void ggml_backend_webgpu_get_tensor_async(ggml_backend_t backend,
++                                                 const ggml_tensor * tensor,
++                                                 void * data,
++                                                 size_t offset,
++                                                 size_t size) {
++    GGML_UNUSED(backend);
++    // この読取りは CopyBufferToBuffer と MapAsync の完了まで待つ。
++    // 共通 fallback の事前 synchronize と同じ仕事を二度待たずに済む。
++    ggml_backend_tensor_get(tensor, data, offset, size);
++}
++
+ static void ggml_backend_webgpu_synchronize(ggml_backend_t backend) {
+     ggml_backend_webgpu_context * backend_ctx = (ggml_backend_webgpu_context *) backend->context;
+     ggml_backend_webgpu_wait_queue(backend_ctx->webgpu_ctx->global_ctx);
+@@ -3954,7 +3990,7 @@
+     /* .get_name                = */ ggml_backend_webgpu_name,
+     /* .free                    = */ ggml_backend_webgpu_free,
+     /* .set_tensor_async        = */ ggml_backend_webgpu_set_tensor_async,
+-    /* .get_tensor_async        = */ NULL,
++    /* .get_tensor_async        = */ ggml_backend_webgpu_get_tensor_async,
+     /* .set_tensor_2d_async     = */ NULL,
+     /* .get_tensor_2d_async     = */ NULL,
+     /* .cpy_tensor_async        = */ NULL,
+@@ -4048,7 +4084,7 @@
+     }
+ 
+     if (size > 0) {
+-        buf_ctx->global_ctx->queue.WriteBuffer(buf_ctx->buffer, total_offset, data, (size / 4) * 4);
++        buf_ctx->global_ctx->write_buffer(buf_ctx->buffer, total_offset, data, (size / 4) * 4);
+     }
+ 
+     if (size % 4 != 0) {
+@@ -4112,8 +4148,8 @@
+ 
+         grow_buffer(ctx->set_tensor_n_src_buf, src.size(), "set_tensor_n_src_buf");
+         grow_buffer(ctx->set_tensor_n_descs_buf, descs_size, "set_tensor_n_descs_buf");
+-        ctx->queue.WriteBuffer(ctx->set_tensor_n_src_buf, 0, src.data(), src.size());
+-        ctx->queue.WriteBuffer(ctx->set_tensor_n_descs_buf, 0, descs.data(), descs_size);
++        ctx->write_buffer(ctx->set_tensor_n_src_buf, 0, src.data(), src.size());
++        ctx->write_buffer(ctx->set_tensor_n_descs_buf, 0, descs.data(), descs_size);
+ 
+         std::vector<wgpu::BindGroupEntry> entries = {
+             ggml_webgpu_make_bind_group_entry(0, dst_buf, 0, dst_buf.GetSize()),
+@@ -4141,7 +4177,7 @@
+         pass.End();
+ 
+         wgpu::CommandBuffer commands = encoder.Finish();
+-        ctx->queue.Submit(1, &commands);
++        ctx->submit(1, &commands);
+ 
+         src.clear();
+         descs.clear();
+@@ -4220,7 +4256,7 @@
+     wgpu::CommandBuffer commands = encoder.Finish();
+ 
+     // Submit the command buffer to the queue
+-    buf_ctx->global_ctx->queue.Submit(1, &commands);
++    buf_ctx->global_ctx->submit(1, &commands);
+ 
+     // Map the staging buffer to read the data
+     ggml_backend_webgpu_map_buffer(buf_ctx->global_ctx, buf_ctx->global_ctx->get_tensor_staging_buf,
+@@ -4322,7 +4358,7 @@
+         wgpu::CommandBuffer commands = encoder.Finish();
+ 
+         // Submit the command buffer to the queue
+-        global_ctx->queue.Submit(1, &commands);
++        global_ctx->submit(1, &commands);
+ 
+         // Map the staging buffer to read the data
+         ggml_backend_webgpu_map_buffer(global_ctx, global_ctx->get_tensor_staging_buf, wgpu::MapMode::Read, 0,

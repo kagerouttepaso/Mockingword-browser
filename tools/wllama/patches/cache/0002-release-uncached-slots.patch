@@ -1,0 +1,13 @@
+diff --git a/llama.cpp/tools/server/server-context.cpp b/llama.cpp/tools/server/server-context.cpp
+index 78c8ef149a..665be7e2d1 100644
+--- a/llama.cpp/tools/server/server-context.cpp
++++ b/llama.cpp/tools/server/server-context.cpp
+@@ -668,7 +668,7 @@ struct server_slot {
+ 
+             // do not keep context of the child slots - the parent's context is enough
+             // nor of the stateless slots - no task ever reuses it
+-            if (task->is_child() || task->is_stateless() || audio_stream || task->type == SERVER_TASK_TYPE_REALTIME) {
++            if (task->is_child() || task->is_stateless() || audio_stream || task->type == SERVER_TASK_TYPE_REALTIME || !task->params.cache_prompt) {
+                 prompt_clear();
+             }
+ 

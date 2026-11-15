@@ -36,7 +36,9 @@ const STYLE = `${themeCss}
   .group { display: flex; border: 1px solid var(--mw-outline-variant); border-radius: 999px; overflow: hidden; flex: none; }
   button { all: unset; cursor: pointer; padding: 5px 11px; font: inherit; color: inherit; flex: none; }
   .group button + button { border-left: 1px solid var(--mw-outline-variant); }
-  button:hover { background: var(--mw-primary-container); }
+  button:hover { background: color-mix(in srgb,var(--mw-on-surface-variant) 8%,transparent); }
+  button:focus-visible { outline: 2px solid var(--mw-primary); outline-offset: 1px; }
+  .whole { color: var(--mw-primary); }
   button.on { background: var(--mw-primary); color: var(--mw-on-primary); }
   .close { border-radius: 999px; padding: 2px 8px; color: var(--mw-on-surface-variant); }
   @media (prefers-color-scheme: dark) {

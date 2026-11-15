@@ -38,3 +38,7 @@ Android版のVectorDrawableを`artwork/android/`へ取り込み、同じパス�
 ## デザインの更新
 
 `artwork/design-tokens.json`をAndroidのTheme.ktと照合して更新し、`node tools/sync-design.mjs`で共通CSSと2種類のJSを再生成します。`node tools/sync-design.mjs --check`で一致を確認できます。色と役割・アイコンの正本は[デザイン言語](デザイン言語.md)。
+
+## 利用者へ更新を渡すとき
+
+manifest.jsonとpackage.jsonの版をそろえて上げる。同じ版を何度も差し替えない。画面の版表示、実際のツールバーメニュー、拡張を更新した前から開いているページ、未翻訳のページでの開始を確認する。アイコンだけを描画する場合は`node tools/icons.mjs`を使う。

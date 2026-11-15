@@ -5,6 +5,8 @@ import hashlib, json, zipfile
 root = Path(__file__).resolve().parents[1]
 extension = root / 'extension'
 manifest = json.loads((extension / 'manifest.json').read_text('utf-8'))
+if manifest['version'] != json.loads((root / 'package.json').read_text('utf-8'))['version']:
+    raise SystemExit('manifest.jsonとpackage.jsonの版が一致しません')
 allowed = {'background': {'.js'}, 'core': {'.js'}, 'offscreen': {'.js', '.html'},
            'page': {'.js', '.css'}, 'shared': {'.js', '.css'}, 'ui': {'.js', '.css', '.html'},
            'icons': {'.png'}, 'licenses': {'.txt'}}

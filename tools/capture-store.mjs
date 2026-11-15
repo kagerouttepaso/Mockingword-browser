@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
+import {generateIcons} from './icons.mjs';
 import { fileURLToPath } from 'node:url';
 import { launch, enableModelCache, message, tabIdOf, sleep } from './lib/browser.mjs';
 
@@ -21,12 +22,8 @@ async function viewport(session) {
 }
 try {
   b = await launch({ port: 9352, width: 1320, height: 900 });
-  // The raster icons use the Android geometry already stored in artwork/icon.svg.
   const art = await b.open('about:blank', 100);
-  for (const size of [16, 32, 48, 128, 512]) {
-    const png = await b.eval(art.session, `(async()=>{const img=new Image();img.src=${JSON.stringify('data:image/svg+xml;base64,' + Buffer.from(svg).toString('base64'))};await img.decode();const c=document.createElement('canvas');c.width=c.height=${size};c.getContext('2d').drawImage(img,0,0,${size},${size});return c.toDataURL('image/png').split(',')[1]})()`);
-    fs.writeFileSync(path.join(root, size === 512 ? 'artwork/icon512.png' : `extension/icons/icon${size}.png`), Buffer.from(png, 'base64'));
-  }
+  await generateIcons(b,art.session);
   await enableModelCache(b, { models: ['0.8B'] });
   await b.eval(b.ext, `chrome.storage.sync.set({debugLog:false,mode:'both',theme:'light'})`);
   console.log('Preparing model');

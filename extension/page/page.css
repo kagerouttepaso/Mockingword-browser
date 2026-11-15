@@ -71,3 +71,5 @@ html.plamo-mode-both .plamo-tr {
   .plamo-bubble-foot { color: var(--mw-on-surface-variant); }
   .plamo-toast-error { color: #ffa198; background: #2d1214; border-color: #f85149; }
 }
+
+.plamo-bubble-link:focus-visible{outline:2px solid var(--mw-primary);outline-offset:2px}

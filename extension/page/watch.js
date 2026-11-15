@@ -66,7 +66,7 @@ ${globalThis.__mockingwordThemeCss}
           transition: opacity 0.16s ease-out, transform 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.3);
         }
         button.show { opacity: 1; transform: none; }
-        button:hover { border-color: var(--mw-secondary); }
+        button:hover { border-color: var(--mw-primary); }
         img { width: 30px; height: 30px; display:block; }
       </style>
       <button title="選択範囲を日本語に訳す（Mockingword）" aria-label="選択範囲を日本語に訳す"><img src="${chrome.runtime.getURL('icons/icon32.png')}" alt=""></button>`;

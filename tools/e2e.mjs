@@ -35,7 +35,7 @@ ${['Premium requests are counted for each model separately and billed at the end
 
 /**
  * 画面内の順番の試験のページ：見出し（h3 と、GitHub のモデル名のような太字の p）→第1段落→本文→注記の順に送るか。
- * 段落は約150字にして、見出しと本文が1つのまとまりに入りきらないようにする。
+ * 段落は約150字にして、見出しと本文が1つのバッチに入りきらないようにする。
  */
 const SENT = (topic, n) => `Paragraph ${n} about ${topic} explains how the setting works for members, how billing is counted each month, and what administrators should check first.`;
 const READING = `<!doctype html><html><head><meta charset="utf-8"><title>reading</title></head>
@@ -47,7 +47,7 @@ const READING = `<!doctype html><html><head><meta charset="utf-8"><title>reading
 <div role="note" style="font-style:italic">*When Fable is used, ${SENT('safety classifiers', 8)}</div></li></ul>
 </main></body></html>`;
 
-/** 取り消しの試験のページ：控えに無い文章（ページごとに違う）の5段落。 */
+/** 取り消しの試験のページ：キャッシュに無い文章（ページごとに違う）の5段落。 */
 const FRESH = (name) => `<!doctype html><html><head><meta charset="utf-8"><title>${name}</title></head><body style="font:16px sans-serif">
 ${['Organization roles grant members access', 'Repository rulesets protect important branches', 'Security managers review new alerts', 'Billing managers can download invoices', 'Moderators can block abusive users'].map((s, i) => `<p>${s} on the ${name.slice(1)} page, item ${i + 1}, and the settings take effect immediately.</p>`).join('')}</body></html>`;
 
@@ -104,7 +104,7 @@ try {
   t.check('ページ全体を訳す（5段落）', tr?.n === 5, `${((Date.now() - t0) / 1000).toFixed(1)}秒`);
   t.check('段落の中のリンクが訳文に残る', (tr?.p2?.match(/<a href="https:\/\/example.com\/[ab]">/g) ?? []).length === 2, tr?.p2);
   t.check('インラインコードが原文のまま残る', /<code>npm install<\/code>/.test(tr?.p3 ?? '') && /setup guide|セットアップ/.test(tr?.p3 ?? ''), tr?.p3);
-  // 原文側のインラインコードは、中身を隠すと余白と背景の空の箱が残るので、入れ物ごと隠す（2026-11-11、GitHub の README）。
+  // 原文側のインラインコードは、中身を隠すと余白と背景の空の箱が残るので、要素ごと隠す（2026-11-11、GitHub の README）。
   const codes = await b.eval(page.session, `(() => { const w = (e) => Math.round(e?.getBoundingClientRect().width ?? -1); return { orig: w(document.querySelector('#p3 > code')), tr: w(document.querySelector('#p3 .plamo-tr code')) }; })()`);
   t.check('原文側のインラインコードが空の箱で残らない', codes.orig === 0 && codes.tr > 0, JSON.stringify(codes));
   t.check('SVG の中（CSS・文字）と日本語は訳さない', tr && tr.svg === 0 && !tr.ja);
@@ -122,7 +122,7 @@ try {
   }, 30000);
   t.check('同じサイトの別のページも対訳のまま自動で訳す', next?.cls === 'plamo-mode-both', JSON.stringify(next));
   t.check('ボタンのメニューが「元のページに戻す」になる', (await toPage(b, tabId, { type: 'get-state' }))?.translating === true);
-  // 描き直し（hydration）が同じ文字のノードを包みの外へ入れ直し、訳文を外しても、訳文に戻る（2026-11-11、行き来で冒頭が原文のまま残った件）。
+  // 描き直し（hydration）が同じ文字のノードをラッパーの外へ入れ直し、訳文を外しても、訳文に戻る（2026-11-11、行き来で冒頭が原文のまま残った件）。
   await b.eval(page.session, `(() => { const p = document.getElementById('p1'); const texts = [...p.querySelectorAll('[data-plamo-orig]')].flatMap((w) => [...w.childNodes]); p.replaceChildren(...texts); })()`);
   const back = await b.waitFor(async () => {
     const r = await b.eval(page.session, `(() => { const p = document.getElementById('p1'); return { tr: !!p.querySelector('.plamo-tr'), raw: [...p.childNodes].some((c) => c.nodeType === 3 && c.data.trim()) }; })()`);
@@ -183,7 +183,7 @@ try {
   t.check('<br> の並ぶ段落を1つのまま訳し、訳文に改行と太字が残る', cmTr?.c1.n === 1 && cmTr.c1.br === 5 && cmTr.c1.strong === 3 && cmTr.c2.br === 3 && cmTr.c2.strong === 1, `${cmTr?.c1.html} ／ ${cmTr?.c2.html}`);
   t.check('訳文表示で原文側の <br>・太字が残らない', cmTr && cmTr.c1.shown.length === 0 && cmTr.c2.shown.length === 0 && cmTr.c3.shown.length === 0 && cmTr.c1.gapTop < 8 && cmTr.c1.height <= cmBefore * 1.2,
     `見えたままの原文の要素 ${JSON.stringify([cmTr?.c1.shown, cmTr?.c2.shown, cmTr?.c3.shown])}・上の隙間 ${cmTr?.c1.gapTop}px・高さ ${cmBefore}→${cmTr?.c1.height}px`);
-  t.check('太字の中のリンク・画像・コード・中がコードだけのリンクが訳文に写り、見た目の同じ span と文の途中の <br> は目印にしない', cmTr?.c3.linkInBold && cmTr.c3.img === 1 && cmTr.c3.code === 2 && cmTr.c3.codeLink && cmTr.c3.br === 0 && cmTr.c3.plainSpan === 0, cmTr?.c3.html);
+  t.check('太字の中のリンク・画像・コード・中がコードだけのリンクが訳文に写り、見た目の同じ span と文の途中の <br> はマーカーにしない', cmTr?.c3.linkInBold && cmTr.c3.img === 1 && cmTr.c3.code === 2 && cmTr.c3.codeLink && cmTr.c3.br === 0 && cmTr.c3.plainSpan === 0, cmTr?.c3.html);
   await message(b, { type: 'page-action', tabId: cmTab, action: 'both' });
   await sleep(300);
   const cmBoth = await b.eval(cm.session, `(() => { const p = document.getElementById('c1'); return { orig: [...p.querySelectorAll(':scope > br')].filter((x) => getComputedStyle(x).display !== 'none').length, tr: p.querySelectorAll('.plamo-tr br').length }; })()`);
@@ -216,16 +216,16 @@ try {
   const mains = order?.arrived.filter((a) => a.where === 'main') ?? [];
   const navs = order?.arrived.filter((a) => a.where === 'nav') ?? [];
   t.check('本文もナビもすべて訳す', mains.length >= 9 && navs.length >= 10, `本文 ${mains.length}・ナビ ${navs.length}`);
-  // 順番は「送った順」で見る（このページは4まとまりで同時に送るので、届いた順は送った順を表さない）。調査用のログの送信を使う。
+  // 順番は「送った順」で見る（このページは4バッチで同時に送るので、届いた順は送った順を表さない）。調査用のログの送信を使う。
   const sends = ((await message(b, { type: 'logs-get' }))?.logs ?? []).filter((l) => l.event === '送信' && l.page === '127.0.0.1' && l.texts?.some((s) => /Premium|General settings|Home|Terms|Usage by model/.test(s)));
   const isMain = (s) => s.texts.some((x) => /Premium|budget|Usage by model|preview|Organization owners|CSV|exceeds|Discounts|Contact support/.test(x));
   const isNav = (s) => s.texts.some((x) => /General settings|Billing and plans|Audit log|<a1>Home|<a1>Terms/.test(x));
   const lastMain = sends.findLastIndex(isMain);
   const firstNav = sends.findIndex(isNav);
-  t.check('本文のまとまりをナビより先に送る', lastMain >= 0 && firstNav >= 0 && lastMain < firstNav, sends.map((s) => (isMain(s) ? '本文' : '') + (isNav(s) ? 'ナビ' : '')).join(' → '));
+  t.check('本文のバッチをナビより先に送る', lastMain >= 0 && firstNav >= 0 && lastMain < firstNav, sends.map((s) => (isMain(s) ? '本文' : '') + (isNav(s) ? 'ナビ' : '')).join(' → '));
   t.check('訳している途中の段落に印が付き、終わると外れる', order?.working > 0 && order?.left === 0, `印 ${order?.working}回`);
   const mainTimes = mains.map((a) => Math.round(a.t)).sort((x, y) => x - y);
-  t.check('まとまりの中で訳し終わった行から先に出る', new Set(mainTimes.map((x) => Math.round(x / 100))).size > 2, `本文の訳文が届いた時刻のばらつき ${mainTimes.at(-1) - mainTimes[0]}ms`);
+  t.check('バッチの中で訳し終わった行から先に出る', new Set(mainTimes.map((x) => Math.round(x / 100))).size > 2, `本文の訳文が届いた時刻のばらつき ${mainTimes.at(-1) - mainTimes[0]}ms`);
   await b.screenshot(lay.session, path.join(SHOTS, 'layout.png'));
 
   // ---- 画面内の順番（見出し→第1段落→本文→注記） ----
@@ -239,8 +239,8 @@ try {
   const firstBack = tiers.findIndex((ts) => ts.some((x) => x >= 2));
   t.check('画面内は見出しと第1段落を本文・注記より先に送る', rsends.length > 0 && tiers[0].includes(0) && lastFront < firstBack, tiers.map((ts) => ts.join('')).join(' → '));
 
-  // ---- 同じタブで次のページへ移っても、前のページで取り消した番号の依頼を捨てない ----
-  // 番号はページごとに1から振り直す。裏方が取り消した番号を覚え続けていたので、次のページの最初のまとまりが即座に取り消され、
+  // ---- 同じタブで次のページへ移っても、前のページで取り消した番号のリクエストを捨てない ----
+  // 番号はページごとに1から振り直す。Service Workerが取り消した番号を覚え続けていたので、次のページの最初のバッチが即座に取り消され、
   // 画面の上の段落が訳されずに残っていた（2026-11-12、GitHub の組織設定のページ群を行き来したときの作者のログ）。
   const rdTab = await tabIdOf(b, rd.targetId);
   await b.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/cancelA` }, rd.session); // 同じサイトなので自動で訳し始める
@@ -283,9 +283,9 @@ try {
   t.check('テキスト翻訳で訳し終わる前から訳文とトークン/秒が出る', !!midway && !!done && midway.out.length < done.out.length, midway ? `途中 ${midway.out.length}字（${midway.foot}）→ ${done?.out.length}字（${done?.foot}）` : `途中が出ない：${done?.foot}`);
 
   const stats = await message(b, { type: 'cache-stats' });
-  t.check('設定画面に控えの件数と大きさが出る', stats?.count > 0 && stats?.bytes > 0, `件数 ${stats?.count}・約 ${Math.round((stats?.bytes ?? 0) / 1024)} KB・全体 ${Math.round((stats?.usage ?? 0) / 1e6)} MB`);
+  t.check('設定画面にキャッシュの件数と大きさが出る', stats?.count > 0 && stats?.bytes > 0, `件数 ${stats?.count}・約 ${Math.round((stats?.bytes ?? 0) / 1024)} KB・全体 ${Math.round((stats?.usage ?? 0) / 1e6)} MB`);
 
-  // ---- 控え（モデルを解放し、裏方も止めた後）----
+  // ---- キャッシュ（モデルを解放し、Service Workerも止めた後）----
   await message(b, { type: 'unload' });
   await b.send('ServiceWorker.enable', {}, b.ext);
   await b.send('ServiceWorker.stopAllWorkers', {}, b.ext);
@@ -293,7 +293,7 @@ try {
   const c0 = Date.now();
   const cached = await message(b, { type: 'translate-one', text: 'Warm up the model.' });
   const st = await message(b, { type: 'status' });
-  t.check('控えはモデルも裏方も無い状態から返る', cached?.ok && !st.loaded && Date.now() - c0 < 1000, `${Date.now() - c0}ms、モデル ${st.loaded}`);
+  t.check('キャッシュはモデルもService Workerも無い状態から返る', cached?.ok && !st.loaded && Date.now() - c0 < 1000, `${Date.now() - c0}ms、モデル ${st.loaded}`);
 
   // ---- CPU ----
   // ---- 今の設定で測る（PCに合わせる調整の1回分） ----
@@ -323,6 +323,6 @@ try {
   server.close();
   const ok = t.summary();
   b.modelCache?.assertHealthy();
-  console.log(`画面の写し：${SHOTS}`);
+  console.log(`画面のコピー：${SHOTS}`);
   process.exit(ok ? 0 : 1);
 }

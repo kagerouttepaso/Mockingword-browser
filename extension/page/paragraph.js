@@ -1,4 +1,4 @@
-// 段落を読む。段落（ブロックの中の一続きの文字）の DOM を、目印の文法（shared/markup.js）のトークン列にし、
+// 段落を読む。段落（ブロックの中の一続きの文字）の DOM を、マーカーの文法（shared/markup.js）のトークン列にし、
 // 訳文表示で隠す要素と、訳文を置く場所を決める。段落の中の要素の分類はここの roleOf だけで行う
 // （docs/11_設計方針.md「段落のデータの流れ」。要素の種類ごとの例外をほかの場所に足さない）。
 
@@ -7,7 +7,7 @@ import { UI, isInline, isInlineCode, skipElement } from './dom.js';
 
 const isLink = (el) => el.tagName === 'A' && el.hasAttribute('href');
 
-/** 入れ物を目印にするかを決める見た目の性質。 */
+/** 要素をマーカーにするかを決める見た目の性質。 */
 const LOOK = ['fontWeight', 'fontStyle', 'fontFamily', 'fontSize', 'color', 'backgroundColor', 'textDecorationLine', 'verticalAlign', 'textTransform', 'borderTopStyle', 'borderBottomStyle', 'paddingLeft'];
 const lookCache = new WeakMap();
 function lookOf(el) {
@@ -19,7 +19,7 @@ function lookOf(el) {
   return v;
 }
 
-/** 親と見た目が同じ入れ物か（背景が透明なら親の背景のまま）。 */
+/** 親と見た目が同じ要素か（背景が透明なら親の背景のまま）。 */
 function sameLook(el, parent) {
   const a = lookOf(el);
   const b = lookOf(parent);
@@ -35,11 +35,11 @@ function visibleVoid(el) {
 
 /**
  * 段落の中の要素の役割。段落の中の要素は種類を名指しせず、この1つの規則で分ける。
- * - 'wrap'：段落の文字を含む入れ物のうち、リンクと、親と見た目が違うもの（太字・斜体・色・背景や枠のあるバッジなど）。
- *   訳した文字を元の要素の写しに入れ直す。
- * - 'pass'：段落の文字を含み、親と見た目が同じ入れ物（React などが文を細かく包む span）。目印にせず中へ入る。
- * - 'code'：インラインコード・translate="no" など訳さない要素と、この段落の文字を含むが訳す文字を含まない入れ物
- *   （中がコードだけのリンクなど）。元のまま中身ごと写す。入れ物と中のコードを別々の目印にすると、モデルが毎回両方を写し、
+ * - 'wrap'：段落の文字を含む要素のうち、リンクと、親と見た目が違うもの（太字・斜体・色・背景や枠のあるバッジなど）。
+ *   訳した文字を元の要素のコピーに入れ直す。
+ * - 'pass'：段落の文字を含み、親と見た目が同じ要素（React などが文を細かく包む span）。マーカーにせず中へ入る。
+ * - 'code'：インラインコード・translate="no" など訳さない要素と、この段落の文字を含むが訳す文字を含まない要素
+ *   （中がコードだけのリンクなど）。元のまま中身ごと写す。要素と中のコードを別々のマーカーにすると、モデルが毎回両方を写し、
  *   出力が増えた（2026-11-16、MDN の Navigator のページで出力トークン +21%）。
  * - 'void'：文字の無い、見える要素（<br>・アイコン・画像）。元のまま写す。
  * - 'foreign'：入れ子のブロック・inline-block（ボタンなど。別の段落として訳す）、ほかの段落の文字を含む要素。触れない。
@@ -62,7 +62,7 @@ function insideCode(el, stop) {
 
 /**
  * 訳文を置く場所。段落の文字をすべて含むいちばん内側の要素（太字だけの行・見出しのリンクなら、その要素。訳文も太字・リンクのまま）。
- * 原文の包みと、コードの中には置かない（コードの中身を地の文として訳してしまう。2026-11-16、MDN のサイドバーの
+ * 原文のラッパーと、コードの中には置かない（コードの中身を地の文として訳してしまう。2026-11-16、MDN のサイドバーの
  * 「ブロックのリンクの中のコードだけ」の項目114件を訳しに行き、全体が81%遅くなった）。
  */
 function rootOf(block, nodes) {
@@ -104,7 +104,7 @@ export function readParagraph(block, nodes) {
         continue;
       }
       if (child.nodeType !== Node.ELEMENT_NODE || child.matches(UI)) continue;
-      if (child.hasAttribute('data-plamo-orig')) { // 原文の文字の包み
+      if (child.hasAttribute('data-plamo-orig')) { // 原文の文字のラッパー
         owned = walk(child) && owned;
         continue;
       }
@@ -132,7 +132,7 @@ export function readParagraph(block, nodes) {
 }
 
 /**
- * 段落を、モデルに渡す目印付きの1行にする。返すもの：text・plain（shared/markup.js の encode）と、marks・hide・root（readParagraph）。
+ * 段落を、モデルに渡すマーカー付きの1行にする。返すもの：text・plain（shared/markup.js の encode）と、marks・hide・root（readParagraph）。
  * 以前はリンクとコードだけを名指しで拾い、原文は文字だけを隠していたので、名簿に無い要素が訳文から消え（太字・改行）、
  * 文字以外の中身が訳文表示で残っていた（コードの空の箱、<br> の空行）。2026-11-16、要素の種類ごとの対処をやめてこの流れにした。
  */

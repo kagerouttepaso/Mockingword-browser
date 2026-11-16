@@ -33,7 +33,7 @@ node tools/wllama/patches/attn/run-experiment.mjs attn
 
 `probe-webgpu.js` をBraveのDevToolsで実行すると、adapterのfeatures・matrix configに加え、新しいmask分類だけのWGSLとpipelineを作成し、診断本文をJSONへ出す。probeは追加分類の検証に使い、実attention全体の確認は候補WASMで行う。
 
-旧計測round2のtile attentionは141ms／32回。KVタイルを75〜90%省ける条件では25〜55msを狙う。改訂版ではatomicの競合と同期が加わるため、初版の予測を採用の証拠にはしない。速度は同じtoken数・batch構成で比較し、訳と目印も照合する。
+旧計測round2のtile attentionは141ms／32回。KVタイルを75〜90%省ける条件では25〜55msを狙う。改訂版ではatomicの競合と同期が加わるため、初版の予測を採用の証拠にはしない。速度は同じtoken数・batch構成で比較し、訳とマーカーも照合する。
 
 ```powershell
 node tools/wllama/patches/attn/analyze-profile.mjs <profile出力ディレクトリ>
@@ -47,4 +47,4 @@ node tools/wllama/patches/attn/analyze-profile.mjs <profile出力ディレクト
 
 ## H4・H6の実測を引き継ぐ
 
-H4は通常版の8まとまり1.706／1.670→1.575秒で、5%の判定幅を超えた採用候補。GPUの行列積時間はprefillの台本で別に確かめる。H6のgreedy指定は1.705→1.644秒、3.4%で判定幅内のため、速度だけでの採用は保留する。両方の訳の差は基準でも発生する揺れと報告されている。
+H4は通常版の8バッチ1.706／1.670→1.575秒で、5%の判定幅を超えた採用候補。GPUの行列積時間はprefillの台本で別に確かめる。H6のgreedy指定は1.705→1.644秒、3.4%で判定幅内のため、速度だけでの採用は保留する。両方の訳の差は基準でも発生する揺れと報告されている。

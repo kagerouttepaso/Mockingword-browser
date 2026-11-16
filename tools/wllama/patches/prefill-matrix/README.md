@@ -47,6 +47,6 @@ node tools/wllama/patches/prefill-matrix/probe.mjs --power low-power
 
 probeが成立すれば、実装・検証6〜12時間を見込む。RTX 4060のmatmulはH4実測300msに対し、H4bで80〜180msを仮置きする。追加120〜220msを減らせる条件なら検討価値がある。Radeon 860MはWMMAを持つRDNA3.5の実装候補だが、driverと公開config次第であり、同GPUの速度測定はまだない。
 
-既存matrix shaderはFP16累積を使い、NaNについての既知注意がある。着手後は、実モデルのQ4_K/Q6_Kの形状で有限性・誤差を調べる。395／454／512token、長いprompt、端数と非ゼロoffset、混在batchを含める。通常版の訳・目印・token列を基準の揺れと比較し、取消・再実行も確認する。非有限値や基準の揺れを超える品質差が出ればFP16累積版を採用せず、f32結果を使う設計を別に評価する。
+既存matrix shaderはFP16累積を使い、NaNについての既知注意がある。着手後は、実モデルのQ4_K/Q6_Kの形状で有限性・誤差を調べる。395／454／512token、長いprompt、端数と非ゼロoffset、混在batchを含める。通常版の訳・マーカー・token列を基準の揺れと比較し、取消・再実行も確認する。非有限値や基準の揺れを超える品質差が出ればFP16累積版を採用せず、f32結果を使う設計を別に評価する。
 
 性能はprofile-gpuでmatmul部分を分けて確認し、通常版の3組以上の前後比較で総時間の5%または試行間変動を超える改善を採用条件にする。SDK・guard・shaderの本実装は、この確認作業では始めない。

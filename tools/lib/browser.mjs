@@ -1,5 +1,5 @@
 // 通しの試験・速さの測定の共通部分。Chromiumブラウザーを新しい一時プロファイルで起動し、拡張機能を読み込み、DevTools（CDP）で操作する。
-// 毎回新しいプロファイルを使う（使い回すと前回の裏方が残り、読み込み直しても起動しなかった。2026-11-09）。
+// 毎回新しいプロファイルを使う（使い回すと前回のService Workerが残り、読み込み直しても起動しなかった。2026-11-09）。
 // そのため最初の翻訳でモデル（0.8Bで約570MB）を Hugging Face から取得する（約35秒）。
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -124,9 +124,9 @@ export async function launch({ port = 9350, extension = EXTENSION, width = 1200,
     }
   };
 
-  // 拡張機能の裏方を待ち、ID と、依頼を送るための拡張機能のページ（設定画面）を用意する。
+  // 拡張機能のService Workerを待ち、ID と、リクエストを送るための拡張機能のページ（設定画面）を用意する。
   const sw = await b.waitFor(async () => (await b.targets()).find((t) => t.type === 'service_worker' && t.url.endsWith('/background/main.js')), 20000, 300);
-  if (!sw) throw new Error('拡張機能の裏方が起動しませんでした（manifest の誤りなど）');
+  if (!sw) throw new Error('拡張機能のService Workerが起動しませんでした（manifest の誤りなど）');
   b.extensionId = new URL(sw.url).host;
   b.ext = (await b.open(`chrome-extension://${b.extensionId}/ui/options.html`, extensionWaitMs)).session;
   await b.waitFor(() => b.eval(b.ext, `typeof chrome !== 'undefined' && !!chrome.runtime?.sendMessage`), 10000, 200);
@@ -135,7 +135,7 @@ export async function launch({ port = 9350, extension = EXTENSION, width = 1200,
   return b;
 }
 
-/** 拡張機能の依頼を送る（設定画面から chrome.runtime.sendMessage）。 */
+/** 拡張機能のリクエストを送る（設定画面から chrome.runtime.sendMessage）。 */
 export function message(b, msg) {
   return b.eval(b.ext, `chrome.runtime.sendMessage(${JSON.stringify(msg)})`);
 }
@@ -147,7 +147,7 @@ export async function tabIdOf(b, targetId) {
   return b.eval(b.ext, `chrome.tabs.query({ active: true, lastFocusedWindow: true }).then((t) => t[0].id)`);
 }
 
-/** 裏方の pages.js の sendToPage と同じ手順で、ページへ差し込んでから指示を送る（右クリックのメニューの代わり）。 */
+/** Service Workerの pages.js の sendToPage と同じ手順で、ページへ差し込んでから指示を送る（右クリックのメニューの代わり）。 */
 export function toPage(b, tabId, msg, frameId = 0) {
   return b.eval(b.ext, `(async () => {
     const target = { tabId: ${tabId}, frameIds: [${frameId}] };

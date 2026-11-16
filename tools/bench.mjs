@@ -1,5 +1,5 @@
 // ページの翻訳の速さを測る。保存した MHTML（ブラウザーの「名前を付けて保存」→「ウェブページ、1 ファイル」）か URL を訳し、
-// 画面内・全体の時間、問い合わせの回数、リンクの残り方を出す。続けて読み直し、控えから置き換える2回目も測る。
+// 画面内・全体の時間、リクエストの回数、リンクの残り方を出す。続けて読み直し、キャッシュから置き換える2回目も測る。
 // 実行：node tools/bench.mjs <MHTML のパス | URL> [--model 0.8B|2B] [--device auto|gpu|cpu] [--parallel 4] [--ubatch 512]
 // MHTML は作者の環境の保存物なのでリポジトリに入れない。MHTML のときは保存した HTML・CSS・画像だけを返し、ほかの通信は止める。
 // 結果の残し方は docs/06_開発と検証.md「速さの測定」。
@@ -85,7 +85,7 @@ try {
       return { paragraphs: trs.length, withLinks: trs.filter((t) => t.querySelector('a[href]')).length, brokenMarks: trs.filter((t) => new RegExp(${JSON.stringify(MARK_TAG.source)}).test(t.textContent)).length };
     })()`);
     console.log(`${label}：${((Date.now() - t0) / 1000).toFixed(1)}秒、${logs.filter((l) => /訳し終わり/.test(l)).join(' / ')}`);
-    console.log(`  訳文 ${r.paragraphs}段落、リンクを含む ${r.withLinks}段落、崩れた目印 ${r.brokenMarks}`);
+    console.log(`  訳文 ${r.paragraphs}段落、リンクを含む ${r.withLinks}段落、崩れたマーカー ${r.brokenMarks}`);
     // 画面に見えている訳文を、本文・ナビ（ナビゲーション・サイドバー・ヘッダー・フッター・メニュー）・その他に分け、訳し終えた時刻を出す。
     const v = await b.eval(session, `(() => {
       const MAIN = 'main, article, [role="main"], .markdown-body';
@@ -105,7 +105,7 @@ try {
   }
 
   await run('1回目');
-  await run('2回目（読み直し、控えから置き換える）');
+  await run('2回目（読み直し、キャッシュから置き換える）');
 } finally {
   await b.close();
   b.modelCache?.assertHealthy();

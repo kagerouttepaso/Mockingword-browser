@@ -9,7 +9,7 @@ const SKIP_TAGS = new Set([
 export const XHTML = 'http://www.w3.org/1999/xhtml';
 /** 拡張機能が足す表示（訳文・吹き出し・バー）。 */
 export const UI = '.plamo-tr, .plamo-ui, .plamo-ui-host';
-/** 拡張機能自身の要素（表示と、原文の包み）。 */
+/** 拡張機能自身の要素（表示と、原文のラッパー）。 */
 export const OWN = UI + ', [data-plamo-orig]';
 
 const displayCache = new WeakMap();

@@ -3,10 +3,11 @@
 //   t0        … ページへ「訳す」を送った時刻
 //   firstLine … 訳文が最初にページへ入った時刻（null 可）
 //   consoles  … ページのコンソールの LOG_TAG（shared/messages.js）の行 [{ t, text }]（CDP の timestamp）
-//   traces    … 調査用のログ（裏方の logs。time は ISO、裏方が受け取った時刻）
+//   traces    … 調査用のログ（Service Workerの logs。time は ISO、Service Workerが受け取った時刻）
 //   steps     … 計測版 wllama の step（perf-trace.mjs の analyzeEvents().steps。無ければ []）
-//   parallel  … 同時本数
+//   parallel  … 同時実行数
 
+import { LOG_SOURCE } from '../../extension/shared/messages.js';
 import { kernelCategory } from './gpu-timing.mjs';
 
 const at = (entry) => Date.parse(entry.time);
@@ -97,7 +98,7 @@ export function stepSummary(steps, from, to) {
 export function analyzeReplay({ t0, firstLine, consoles, traces, steps = [], parallel }) {
   const sends = traces.filter((e) => e.event === '送信').map((e) => ({ id: e.id, t: at(e), lines: e.lines, chars: e.chars, screen: e.screen ?? 0 }));
   const recvs = new Map(traces.filter((e) => ['受信', '取り消し済み', '失敗'].includes(e.event)).map((e) => [e.id, at(e)]));
-  const gens = traces.filter((e) => e.source === 'model' && e.event === '生成' && e.startAt).map(generation).sort((a, b) => a.start - b.start);
+  const gens = traces.filter((e) => e.source === LOG_SOURCE.model && e.event === '生成' && e.startAt).map(generation).sort((a, b) => a.start - b.start);
   const findLog = (re) => consoles.find((c) => re.test(c.text));
   const collected = findLog(/段落 \d+ 件を訳し始めます/);
   const screenLog = findLog(/画面内の訳し終わり/);
@@ -117,7 +118,7 @@ export function analyzeReplay({ t0, firstLine, consoles, traces, steps = [], par
     firstChunk: firstSend ? { lines: firstSend.lines, chars: firstSend.chars, promptTokens: firstGen?.promptTokens, tokens: firstGen?.tokens } : null,
   };
 
-  // 画面内：画面内の段落を含むまとまりが、いつ送られ、その前にほかのまとまりが何本送られたか
+  // 画面内：画面内の段落を含むバッチが、いつ送られ、その前にほかのバッチが何本送られたか
   const screenSends = sends.filter((s) => s.screen > 0);
   const lastScreen = screenSends.at(-1);
   const screen = {
@@ -130,7 +131,7 @@ export function analyzeReplay({ t0, firstLine, consoles, traces, steps = [], par
     chunksBeforeLast: lastScreen ? sends.filter((s) => s.t <= lastScreen.t).length : 0,
   };
 
-  // 送り出し：ページ側の送信中の本数と、モデルが生成している本数の時間平均
+  // 送信：ページ側の送信中の同時実行数と、モデルが生成している同時実行数の時間平均
   const from = firstSend?.t ?? t0;
   const pageInflight = overlap(sends.map((s) => ({ start: s.t, end: recvs.get(s.id) ?? end })), from, end);
   const generating = overlap(gens.map((g) => ({ start: g.entered, end: g.end })), from, end);
@@ -153,9 +154,9 @@ export function formatReplay(a) {
   const f = a.firstLine, sc = a.screen, fl = a.flow;
   const lines = [
     `  最初の行：段落集め ${s(f.collectedMs)} → 最初の送信 ${s(f.firstSendMs)} → モデルが受け取る ${s(f.modelEnteredMs)} → 最初の字 ${s(f.firstTokenMs)} → ページに出る ${s(f.firstLineMs)}` +
-      (f.firstChunk ? `（最初のまとまり ${f.firstChunk.lines}行・${f.firstChunk.chars}字・入力 ${f.firstChunk.promptTokens ?? '—'}トークン・出力 ${f.firstChunk.tokens ?? '—'}トークン）` : ''),
-    `  画面内：${s(sc.doneMs)}。画面内の段落 ${sc.paragraphs}件は ${sc.chunks}まとまり、最後のまとまりは ${sc.chunksBeforeLast}本目（うち画面外 ${sc.nonScreenChunksBeforeLast}本）で ${s(sc.lastScreenChunkSentMs)} に送り ${s(sc.lastScreenChunkDoneMs)} に返った`,
-    `  送り出し：全体 ${s(fl.totalMs)}、まとまり ${fl.chunks}本・生成 ${fl.completions}回、入力 ${fl.promptTokens}・出力 ${fl.tokens}トークン。平均の送信中 ${fl.meanPageInflight}本・生成中 ${fl.meanGenerating}本（上限 ${fl.parallel}本）`,
+      (f.firstChunk ? `（最初のバッチ ${f.firstChunk.lines}行・${f.firstChunk.chars}字・入力 ${f.firstChunk.promptTokens ?? '—'}トークン・出力 ${f.firstChunk.tokens ?? '—'}トークン）` : ''),
+    `  画面内：${s(sc.doneMs)}。画面内の段落 ${sc.paragraphs}件は ${sc.chunks}バッチ、最後のバッチは ${sc.chunksBeforeLast}本目（うち画面外 ${sc.nonScreenChunksBeforeLast}本）で ${s(sc.lastScreenChunkSentMs)} に送り ${s(sc.lastScreenChunkDoneMs)} に返った`,
+    `  送信：全体 ${s(fl.totalMs)}、バッチ ${fl.chunks}本・生成 ${fl.completions}回、入力 ${fl.promptTokens}・出力 ${fl.tokens}トークン。平均の送信中 ${fl.meanPageInflight}本・生成中 ${fl.meanGenerating}本（上限 ${fl.parallel}本）`,
     `    生成中の本数ごとの時間：${Object.entries(fl.generatingByCount).map(([k, v]) => `${k}本 ${s(v)}`).join('、')}`,
   ];
   const st = a.steps;

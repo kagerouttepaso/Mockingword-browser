@@ -1,4 +1,4 @@
-// ページ側の本体。裏方からの指示を受け、ページ全体・選択した段落の翻訳、表示の切り替え、翻訳の終了を行う。
+// ページ側の本体。Service Workerからの指示を受け、ページ全体・選択した段落の翻訳、表示の切り替え、翻訳の終了を行う。
 // page/loader.js が import する。設計は docs/04_ページの翻訳.md。
 
 import { MSG } from '../shared/messages.js';
@@ -23,7 +23,7 @@ function setMode(mode) {
     pump(); // 原文表示の間は止めていた続きを訳す
   }
   updateBar();
-  // ページ全体を訳しているときは、表示を裏方に知らせる（同じサイト内で移ったページも続けて訳すため。原文なら止める）。
+  // ページ全体を訳しているときは、表示をService Workerに知らせる（同じサイト内で移ったページも続けて訳すため。原文なら止める）。
   if (state.started) notify({ type: MSG.PAGE_STATE, mode, host: location.hostname });
 }
 
@@ -40,7 +40,7 @@ function start(mode) {
   state.started = true;
   const paras = collect(document.body);
   resetMeasure(paras);
-  setMode(mode); // started を立ててから呼ぶ（裏方へ表示を知らせる）
+  setMode(mode); // started を立ててから呼ぶ（Service Workerへ表示を知らせる）
   enqueue(paras);
   observe();
   log(`段落 ${paras.length} 件を訳し始めます（画面内 ${state.firstScreen.size} 件）`);
@@ -48,11 +48,11 @@ function start(mode) {
 
 /**
  * 翻訳をやめて元のページに戻す（バーの ×、ボタンのメニューの「元のページに戻す」）。
- * 訳文を消し、原文の包みを外し、書き換えの監視と送り出しを止める。同じサイト内の自動翻訳も止める（原文と同じ扱い）。
- * 控え（cache）は残すので、もう一度訳すときは問い合わせずに出せる。
+ * 訳文を消し、原文のラッパーを外し、書き換えの監視と送信を止める。同じサイト内の自動翻訳も止める（原文と同じ扱い）。
+ * キャッシュ（cache）は残すので、もう一度訳すときはリクエストずに出せる。
  */
 function stop() {
-  state.generation++; // 送ったまとまりの返事が後から届いても捨てる
+  state.generation++; // 送ったバッチの返事が後から届いても捨てる
   state.observer?.disconnect();
   state.observer = null;
   state.pending.clear();
@@ -87,7 +87,7 @@ function retranslate(model) {
   barMessage(null);
   log(`${model} で訳し直します`);
   if (state.mode === 'orig') setMode(state.lastShown);
-  enqueue(again); // 新しいモデルの控えにある訳は先に置き換える
+  enqueue(again); // 新しいモデルのキャッシュにある訳は先に置き換える
 }
 
 // ---------------- 選択した段落 ----------------
@@ -134,9 +134,9 @@ const MAX_REVIVES = 3;
 
 /**
  * ページへ戻ってきた、集め済みの文字の段落を出し直す。collect は集め済みの文字を飛ばすので、ここで拾う。
- * - 描き直し（React などの hydration）が、同じ文字のノードを包みの外へ入れ直し、訳文を外す。訳文が既にあれば書き直す。
+ * - 描き直し（React などの hydration）が、同じ文字のノードをラッパーの外へ入れ直し、訳文を外す。訳文が既にあれば書き直す。
  * - 訳を待つ間に段落が一度ページから外れると、待ち列から落ちる（priority が Infinity）。同じノードが戻ったら列へ入れ直す。
- * どちらも、控えの訳を描画の前に置いたとき（行き来で読み直したページ）に起きやすい。
+ * どちらも、キャッシュの訳を描画の前に置いたとき（行き来で読み直したページ）に起きやすい。
  * 送っている途中・待ち列にある段落はそのままにする。返す段落は enqueue へ渡す。
  */
 function revive(root) {
@@ -186,7 +186,7 @@ function observe() {
       }
     }
     if (roots.size === 0 && changed.size === 0) return;
-    cancelStale(); // 消えた段落の問い合わせは、書き換えが落ち着くのを待たずに取り消す
+    cancelStale(); // 消えた段落のリクエストは、書き換えが落ち着くのを待たずに取り消す
     clearTimeout(timer);
     timer = setTimeout(() => {
       if (state.observer !== observer) return; // 翻訳をやめた後に届いた書き換えは訳さない
@@ -215,7 +215,7 @@ function observe() {
   observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
 }
 
-// ---------------- 裏方からの指示 ----------------
+// ---------------- Service Workerからの指示 ----------------
 
 initBar({ onMode: setMode, onWhole: () => start(state.lastShown), onClose: stop });
 

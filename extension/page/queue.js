@@ -1,5 +1,5 @@
-// 訳す順番と送り出し。控えにある訳を先に置き換え、残りを優先順とDOMのまとまりで数行ずつまとめて、設定の本数まで同時に送る。
-// 古くなったまとまり（段落が消えた・文字が変わった）は取り消す。設計は docs/04_ページの翻訳.md「訳す順番と送り出し」。
+// 訳す順番と送信。キャッシュにある訳を先に置き換え、残りを優先順とDOMのバッチで数行ずつまとめて、設定の同時実行数まで同時に送る。
+// 古くなったバッチ（段落が消えた・文字が変わった）は取り消す。設計は docs/04_ページの翻訳.md「訳す順番と送信」。
 
 import { MSG } from '../shared/messages.js';
 import { LOCAL_DEFAULTS, normalizeLocal } from '../shared/settings.js';
@@ -11,10 +11,10 @@ import { apply, setWorking } from './write.js';
 import { isFront, markReading, onScreen, priority } from './priority.js';
 import { debug, log, notify, seconds, send, state, tokensPerSecond, trace } from './state.js';
 
-/** ページの短い項目をDOMのまとまりで訳す。交互計測ではここだけfalseにすると従来の8行・400字へ戻る。 */
+/** ページの短い項目をDOMのバッチで訳す。交互計測ではここだけfalseにすると従来の8行・400字へ戻る。 */
 const GROUP_CHUNKING = true;
 /**
- * 同時に送るまとまりの数（設定画面の「同時に訳す本数」、PCごと。既定4）。モデルはこれより1本多く同時に計算でき、残り1本を選択範囲・テキスト翻訳に空けておく。
+ * 同時に送るバッチの数（設定画面の「同時に訳す同時実行数」、PCごと。既定4）。モデルはこれより1本多く同時に計算でき、残り1本を選択範囲・テキスト翻訳に空けておく。
  * 同時に送るとモデルがまとめて計算し、全体が速くなる（llama.cpp のネイティブ版で2Bの4本同時が1本ずつの約2.5倍）。
  */
 let workers = LOCAL_DEFAULTS.parallel;
@@ -33,14 +33,14 @@ const connected = (para) => para.nodes.some((n) => n.isConnected);
 const waiting = new Map();
 const waitKey = (text) => `${state.generation}\n${text}`;
 
-/** 送っているまとまり（今の世代）に含まれる文。 */
+/** 送っているバッチ（今の世代）に含まれる文。 */
 function busyTexts() {
   const busy = new Set();
   for (const c of state.chunks.values()) if (c.generation === state.generation) for (const t of c.texts) busy.add(t);
   return busy;
 }
 
-/** 訳を待つ段落から、優先度の高い順に1まとまりを取り出す。同じ文は1回だけ入れ、残りは訳の届くのを待たせる。 */
+/** 訳を待つ段落から、優先度の高い順に1バッチを取り出す。同じ文は1回だけ入れ、残りは訳の届くのを待たせる。 */
 function nextChunk() {
   const scored = [];
   for (const para of state.pending) {
@@ -59,7 +59,7 @@ function nextChunk() {
     candidates.push(para);
   }
   if (GROUP_CHUNKING) {
-    // 定義の依頼を選ぶ点数はその組で最も高い段落の点数。依頼の中はdt→ddのDOM順を守る。
+    // 定義のリクエストを選ぶ点数はその組で最も高い段落の点数。リクエストの中はdt→ddのDOM順を守る。
     const definitions = candidates.filter((p) => p.group?.kind === 'definitions');
     definitions.sort((a, b) => {
       const position = a.element.compareDocumentPosition(b.element);
@@ -74,7 +74,7 @@ function nextChunk() {
   for (const para of selected) busy.add(para.text);
   for (const [, para] of scored) {
     if (!chosen.has(para) && busy.has(para.text)) {
-      // 同じ文をすでに送っている（このまとまり・送信中のまとまり）。送らずに訳を待つ。
+      // 同じ文をすでに送っている（このバッチ・送信中のバッチ）。送らずに訳を待つ。
       state.pending.delete(para);
       const key = waitKey(para.text);
       if (!waiting.has(key)) waiting.set(key, new Set());
@@ -86,7 +86,7 @@ function nextChunk() {
   return selected;
 }
 
-/** 同じ文の訳を待っていた段落を取り出す（送ったまとまりの世代のもの）。 */
+/** 同じ文の訳を待っていた段落を取り出す（送ったバッチの世代のもの）。 */
 function takeWaiting(texts, generation) {
   const out = [];
   for (const text of new Set(texts)) {
@@ -98,8 +98,8 @@ function takeWaiting(texts, generation) {
 }
 
 /**
- * 段落を訳す列に入れる。控えにある訳は、モデルの順番を待たずに先にまとめて置き換える
- * （ページの控え→裏方の控え（IndexedDB に残る）の順に引く）。残りだけを訳しに行く。
+ * 段落を訳す列に入れる。キャッシュにある訳は、モデルの順番を待たずに先にまとめて置き換える
+ * （ページのキャッシュ→Service Workerのキャッシュ（IndexedDB に残る）の順に引く）。残りだけを訳しに行く。
  */
 export async function enqueue(paras) {
   markReading(paras); // 画面内を見出し→第1段落→本文の順に訳すための種類（collect は DOM 順に返す）
@@ -127,21 +127,21 @@ export async function enqueue(paras) {
     });
     if (hits && r?.model) state.model = r.model;
     if (hits && state.firstScreen.size === 0 && state.firstScreenDone === false) state.firstScreenDone = seconds();
-    trace('控え', { asked: misses.length, hits });
+    trace('キャッシュ', { asked: misses.length, hits });
   }
   pump();
   finishIfDone();
 }
 
 /**
- * 何も送っていない状態から訳し始めるときは、いちばん優先のまとまりだけを先に送り、その最初の行が届くか、返事が来てから残りを送る。
- * 全部を同時に送ると、最初のまとまりの原文の読み込みがほかの本数分の読み込みと一緒に計算され、最初の行が遅れる
- * （検証環境Bで同時8本の最初の1まとまり 3.3秒、4本で 2.1秒。docs/09「同時本数の上限」）。sakutto の「最初に待たれる文を満員の組と一緒に読ませない」と同じ考え方（docs/10 N9）。
+ * 何も送っていない状態から訳し始めるときは、いちばん優先のバッチだけを先に送り、その最初の行が届くか、返事が来てから残りを送る。
+ * 全部を同時に送ると、最初のバッチの原文の読み込みがほかの同時実行数分の読み込みと一緒に計算され、最初の行が遅れる
+ * （検証環境Bで同時8本の最初の1バッチ 3.3秒、4本で 2.1秒。docs/09「同時実行数の上限」）。sakutto の「最初に待たれる文を満員の組と一緒に読ませない」と同じ考え方（docs/10 N9）。
  */
 // 時間で区切らず、出来事で残りを送る。以前は 400ms の保険で区切っており、原文の読み込みが遅い PC（検証環境Bの内蔵GPUで約0.6秒）では
-// 最初の行より先に残り7まとまり（約550トークン）の読み込み 2.2秒が始まり、最初の行を止めていた（2026-11-10、docs/10「最初の行（N9）」）。
+// 最初の行より先に残り7バッチ（約550トークン）の読み込み 2.2秒が始まり、最初の行を止めていた（2026-11-10、docs/10「最初の行（N9）」）。
 // 1行目が長くて行が届かない場合も、返事が来れば必ず送り始めるので止まらない。
-/** 先に1本だけ送ったまとまりの番号。0 なら制限なし。 */
+/** 先に1本だけ送ったバッチの番号。0 なら制限なし。 */
 let solo = 0;
 /**
  * 訳す流れの途中か。訳すものが無くなったら false に戻る。先に1本だけ送るのは、流れの始め（訳し始め・スクロールで新しい段落が出たとき）だけにする。
@@ -150,7 +150,7 @@ let solo = 0;
  */
 let flowing = false;
 
-/** 先に送ったまとまりの最初の行が届いた・返事が来たら、残りを送り始める。 */
+/** 先に送ったバッチの最初の行が届いた・返事が来たら、残りを送り始める。 */
 function releaseSolo(id) {
   if (!solo || (id !== undefined && id !== solo)) return;
   solo = 0;
@@ -160,7 +160,7 @@ function releaseSolo(id) {
 /** 訳を待つ段落を、見えている順に workers 本まで同時に送る。1本が返るたびに次を送る。 */
 export function pump() {
   while (!solo && state.chunks.size < workers && !state.halted && state.mode !== 'orig' && state.pending.size > 0) {
-    // 画面内の見出し・第1段落を訳している間は、それより後ろの段だけのまとまりを足さない（見出しの訳を先に出しきる）。
+    // 画面内の見出し・第1段落を訳している間は、それより後ろの段だけのバッチを足さない（見出しの訳を先に出しきる）。
     if (frontBusy() && ![...state.pending].some(isFront)) break;
     const idle = state.chunks.size === 0;
     const chunk = nextChunk();
@@ -181,7 +181,7 @@ export function pump() {
   report();
 }
 
-/** 画面内の見出し・第1段落を含むまとまりを訳しているか。 */
+/** 画面内の見出し・第1段落を含むバッチを訳しているか。 */
 function frontBusy() {
   for (const c of state.chunks.values()) if (c.generation === state.generation && !c.cancelling && c.paras.some(isFront)) return true;
   return false;
@@ -191,10 +191,10 @@ async function runChunk(chunk, generation) {
   const t = performance.now();
   const id = ++state.seq;
   const texts = chunk.map((p) => p.text);
-  if (state.chunks.size === 0) state.busySince = t; // 速さは、送ったまとまりがある間の時間で割る（スクロール待ちの時間を入れない）
+  if (state.chunks.size === 0) state.busySince = t; // 速さは、送ったバッチがある間の時間で割る（スクロール待ちの時間を入れない）
   state.chunks.set(id, { paras: chunk, texts, t, generation });
   setWorking(chunk, true); // 訳している途中の段落に装飾を付ける
-  // screen は画面内の段落の数。画面内の訳し終わりがどのまとまりで決まったかを、ログから追えるようにする（tools/page-replay.mjs）。
+  // screen は画面内の段落の数。画面内の訳し終わりがどのバッチで決まったかを、ログから追えるようにする（tools/page-replay.mjs）。
   const screen = chunk.filter((p) => state.firstScreen.has(p)).length;
   trace('送信', { id, lines: texts.length, chars: texts.join('').length, screen, texts: texts.map((s) => short(s)), inflight: state.chunks.size, pending: state.pending.size });
   let response;
@@ -243,7 +243,7 @@ async function runChunk(chunk, generation) {
     state.cache.set(para.text, response.results[i]);
     if (para.translation !== response.results[i]) apply(para, response.results[i]); // 逐次表示で同じ訳を出していれば書き直さない
   });
-  // 同じ文の訳を待っていた段落にも書き込む。待つ間に文字が変わった段落は、控えに無ければ列へ戻す。
+  // 同じ文の訳を待っていた段落にも書き込む。待つ間に文字が変わった段落は、キャッシュに無ければ列へ戻す。
   for (const para of waiters) {
     if (!connected(para)) continue;
     const v = state.cache.get(para.text);
@@ -257,8 +257,8 @@ async function runChunk(chunk, generation) {
 }
 
 /**
- * 送ったまとまりのうち、段落がすべてページから消えたか、文字が変わったものを取り消す。
- * 取り消すと見えないページ側で生成を止め、枠を空ける。
+ * 送ったバッチのうち、段落がすべてページから消えたか、文字が変わったものを取り消す。
+ * 取り消すとOffscreen Document側で生成を止め、枠を空ける。
  */
 export function cancelStale() {
   for (const [id, c] of state.chunks) {
@@ -271,8 +271,8 @@ export function cancelStale() {
 }
 
 /**
- * まとまりのうち訳し終わった行を、返事を待たずに先に出す（見えないページが生成の途中で送ってくる）。
- * 最後の返事で、行がずれた・訳されていない行は訳し直した訳に置き換わる。控えには最後の返事だけを入れる。
+ * バッチのうち訳し終わった行を、返事を待たずに先に出す（Offscreen Documentが生成の途中で送ってくる）。
+ * 最後の返事で、行がずれた・訳されていない行は訳し直した訳に置き換わる。キャッシュには最後の返事だけを入れる。
  */
 export function showPartial(id, lines) {
   releaseSolo(id);
@@ -293,7 +293,7 @@ export function showPartial(id, lines) {
   updateBar();
 }
 
-/** 訳を待つ段落も送ったまとまりも無くなったら、「訳し終えました」を出す（最初のページ全体だけ）。 */
+/** 訳を待つ段落も送ったバッチも無くなったら、「訳し終えました」を出す（最初のページ全体だけ）。 */
 function finishIfDone() {
   if (state.pending.size > 0 || state.chunks.size > 0 || !state.t0) return;
   log(`全体の訳し終わり ${seconds()}秒（${state.model}、${state.translated}段落、問い合わせ${state.requests}回、${tokensPerSecond()} tok/s）`);

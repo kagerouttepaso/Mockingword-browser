@@ -1,4 +1,4 @@
-// 設定の既定値と選択肢。裏方・ボタンのメニュー・設定画面・テキスト翻訳で共有する。
+// 設定の既定値と選択肢。Service Worker・ボタンのメニュー・設定画面・テキスト翻訳で共有する。
 
 /**
  * chrome.storage.sync に置く設定（Brave の同期で、ほかのPCとそろう）。
@@ -6,18 +6,18 @@
  * idleMinutes：この分数使わなければモデルを解放する（0 は解放しない）。
  * mode：訳したときの表示。'trans'（訳文だけ）・'both'（原文と訳文を並べる）。
  * selectionIcon：文章を選んだときに「訳」アイコンを出すか。
- * debugLog：調査用のログを残すか（ページ・裏方・モデルの出来事。設定画面から保存できる）。
+ * debugLog：調査用のログを残すか（ページ・Service Worker・モデルの出来事。設定画面から保存できる）。
  */
 export const DEFAULTS = { theme: 'system', form: 'polite', source: '', mode: 'trans', model: '0.8B', idleMinutes: 10, debugLog: false, selectionIcon: true };
 
-// 既定の本数を変えるときはここだけを変える。保存済みのPCごとの値は引き継ぐ。
+// 既定の同時実行数を変えるときはここだけを変える。保存済みのPCごとの値は引き継ぐ。
 // 2026-11-10、作者の判断で8本にした。自前ビルドの wllama では、8本が全体の時間も最初の訳も現行の4本より速い（docs/09_性能の仮説検証.md「最終の通算」）。
 export const DEFAULT_PARALLEL = 8;
 
 /**
  * chrome.storage.local に置く、PCの性能に合わせる設定（同期しない。検証環境Bの内蔵GPUと検証環境Aの単体GPUで合う値が違うため）。
  * device：'auto'（WebGPU が使えれば GPU、読み込めなければ CPU）・'gpu'・'cpu'。threads：CPU のスレッド数（0 は自動＝論理コアの半分）。
- * parallel：ページの翻訳で同時に送るまとまりの数。モデルはこれより1本多く同時に計算できるように読み込み、1本を選択範囲・テキスト翻訳に空ける。
+ * parallel：ページの翻訳で同時に送るバッチの数。モデルはこれより1本多く同時に計算できるように読み込み、1本を選択範囲・テキスト翻訳に空ける。
  * ubatch：原文を読み込むときに GPU へ一度に渡すトークン数（llama.cpp の n_ubatch）。大きいほど GPU を使い切れるが、メモリーを多く使う。
  */
 export const LOCAL_DEFAULTS = { device: 'auto', threads: 0, parallel: DEFAULT_PARALLEL, ubatch: 512 };
@@ -74,7 +74,7 @@ export function fillLanguages(select, autoLabel = '自動（段落ごとにモ�
 export function describeStatus(s) {
   if (s?.loading) return `${s.loading} を読み込み中です`;
   if (!s?.loaded) return 'モデルは読み込んでいません（訳すときに読み込みます）';
-  const how = s.device === 'cpu' ? `CPU・${s.threads}スレッド` : `GPU${s.adapter ? `：${s.adapter}` : ''}・同時${s.parallel}本・ubatch ${s.ubatch}`;
+  const how = s.device === 'cpu' ? `CPU・${s.threads}スレッド` : `GPU${s.adapter ? `：${s.adapter}` : ''}・同時${s.parallel}件・ubatch ${s.ubatch}`;
   let text = `${s.loaded} を読み込み済み（${how}）`;
   if (s.idleMinutes && s.lastUse) {
     const left = Math.ceil((s.lastUse + s.idleMinutes * 60_000 - Date.now()) / 60_000);

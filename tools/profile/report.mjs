@@ -61,9 +61,9 @@ export function formatSummary(report) {
   const lines = ['| case | artifact | モデル | visit | 語彙数 | 中央値 秒 | 最初 秒 | tokens/s | ばらつき |', '| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |'];
   for (const run of report.runs) lines.push(`| ${run.caseId ?? run.variant} | ${run.artifact ?? run.variant} | ${run.model} | ${run.visit ?? 0} | ${run.metadata.n_vocab} | ${(run.summary.ms / 1000).toFixed(3)} | ${(run.summary.firstMs / 1000).toFixed(3)} | ${run.summary.tokenFallback ? '取得不能' : run.summary.tps.toFixed(1)} | ${(100 * run.summary.spread).toFixed(1)}% |`);
   for (const comparison of report.pairComparisons ?? []) {
-    lines.push(`\n${comparison.model} ${comparison.referenceId} / ${comparison.candidateId}: 訳 ${comparison.translations.method}、目印 ${comparison.markersPreserved}、速度採否 ${comparison.adoptionAccepted ?? '診断用'}。`);
+    lines.push(`\n${comparison.model} ${comparison.referenceId} / ${comparison.candidateId}: 訳 ${comparison.translations.method}、マーカー ${comparison.markersPreserved}、速度採否 ${comparison.adoptionAccepted ?? '診断用'}。`);
     for (const speed of comparison.speed) lines.push(`基準visit${speed.referenceVisit} / 候補visit${speed.candidateVisit}: ${(100 * speed.delta).toFixed(1)}%（判定幅 ${(100 * speed.tolerance).toFixed(1)}%）。`);
-    for (const difference of comparison.translations.differences) for (const line of difference.lines) lines.push(`まとまり${difference.paragraph}・${line.line}行目：${line.reference} → ${line.candidate}（基準で観測 ${difference.observedInReference}）。`);
+    for (const difference of comparison.translations.differences) for (const line of difference.lines) lines.push(`バッチ${difference.paragraph}・${line.line}行目：${line.reference} → ${line.candidate}（基準で観測 ${difference.observedInReference}）。`);
     if (comparison.tokenComparison) lines.push(`token列の診断: 基準 ${comparison.tokenComparison.referenceRecords} 件、候補 ${comparison.tokenComparison.candidateRecords} 件、列なし ${comparison.tokenComparison.unavailable} 件、usage数との差 ${comparison.tokenComparison.countDifferences} 件、基準未観測 ${comparison.tokenComparison.novel.length} 件。速度採否には使わない。`);
     if (comparison.samplingCounters?.length) {
       lines.push('\n第2回のsampling関連の読取り：', '| case / visit | tensorRead 回数 / ms | mapWait 回数 / ms | hostCopy bytes |', '| --- | ---: | ---: | ---: |');

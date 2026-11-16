@@ -98,7 +98,7 @@ top-k／top-p／min-p は従来どおり計算する。モデルが持つ suppre
 
 ## 期待効果と採否の注意
 
-全語彙107,520の F32 logits は1行430,080バイトである。flag と追加パッチが対象経路へ入れば、sampling の読み戻しは4バイト／行まで減る。複数行でも WebGPU の Map は1回にまとまり、CPU は全候補の構築・sampling を省略できる。
+全語彙107,520の F32 logits は1行430,080バイトである。flag と追加パッチが対象経路へ入れば、sampling の読み戻しは4バイト／行まで減る。複数行でも WebGPU の Map は1回にバッチ、CPU は全候補の構築・sampling を省略できる。
 
 出力が R 行で、既定 chain が完全に GPU へ offload された場合の見込みは次のとおり。既存の profile では転送量を `hostCopy.bytes` で読む。token の memcpy 自体は行ごとに残り、最終段階でも hostCopy の回数は R となる。
 
@@ -111,7 +111,7 @@ top-k／top-p／min-p は従来どおり計算する。モデルが持つ suppre
 
 既存の0.8B計測には decode の tensorRead 約560ms、sampling 約301msがある。この二値は候補を絞る材料で、時間短縮の予測値として足し合わせるには GPU sampling と残る同期費用の実測が必要である。GPU 内の top-k／top-p 等の時間も測り、追加パッチと flag の寄与を分けて判断する。
 
-WebGPU argmax は、CPU greedy と同じく同点で候補配列の先頭を選ぶ。top-k／top-p などが作る候補順序や浮動小数点丸めには backend 間の差が残り得るため、chain 全体の token 列をホストで照合する。基準版の揺れを超える差があれば、訳・目印・速度を添えて統率者へ返す。
+WebGPU argmax は、CPU greedy と同じく同点で候補配列の先頭を選ぶ。top-k／top-p などが作る候補順序や浮動小数点丸めには backend 間の差が残り得るため、chain 全体の token 列をホストで照合する。基準版の揺れを超える差があれば、訳・マーカー・速度を添えて統率者へ返す。
 
 候補配列を直接使う新しい呼出元や、投機的デコードへ token-only を広げる場合は、適用条件と契約の再検討が必要である。今回の採用範囲は、明示指定した通常の翻訳 completion に限る。
 

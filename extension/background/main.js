@@ -1,7 +1,7 @@
-// 拡張機能の裏方（service worker）の入口。起動時の準備と、ほかの部品からの依頼の振り分けだけを行う。
-// 部品の全体像と依頼の流れは docs/02_アーキテクチャ.md。
+// 拡張機能のService Workerの入口。起動時の準備と、ほかの部品からのメッセージの振り分けだけを行う。
+// 部品の全体像とメッセージの流れは docs/02_アーキテクチャ.md。
 
-import { MSG, OFFSCREEN } from '../shared/messages.js';
+import { LOG_SOURCE, LOG_TAG, MSG, OFFSCREEN } from '../shared/messages.js';
 import { CancelledError, cancel, forget, status, streamPartial, unload } from '../core/engine.js';
 import { lookupCached, partialLines, translateBatch, translateLines, translateText } from '../core/translator.js';
 import { clear as clearCache, stats as cacheStats } from '../core/cache.js';
@@ -34,13 +34,13 @@ function noticeToTab(text) {
   if (lastTabId != null) chrome.tabs.sendMessage(lastTabId, { type: MSG.NOTICE, text }).catch(() => {});
 }
 
-/** ページのまとまりの番号（タブ・枠・まとまり）。取り消しで同じ番号を作る。 */
+/** ページのバッチの番号（タブ・枠・バッチ）。取り消しで同じ番号を作る。 */
 const requestIdOf = (sender, id) => `page:${sender.tab?.id}:${sender.frameId}:${id}`;
 
-/** 訳しているページのまとまりの問い合わせ番号（取り消しを、訳している間だけ効かせる）。 */
+/** 訳しているページのバッチのリクエスト番号（取り消しを、訳している間だけ効かせる）。 */
 const batches = new Set();
 
-/** 依頼の種類ごとの受け持ち。返した値をそのまま返事にする。 */
+/** メッセージの種類ごとの受け持ち。返した値をそのまま返事にする。 */
 const handlers = {
   async [MSG.TRANSLATE_BATCH](message, sender, options) {
     lastTabId = sender.tab?.id ?? lastTabId;
@@ -50,12 +50,12 @@ const handlers = {
     batches.add(options.requestId);
     try {
       const r = await translateBatch(message.texts, options);
-      addLog('裏方', '完了', { requestId: options.requestId, ms: Date.now() - t0, requests: r.stats.requests, fallback: r.stats.fallback });
+      addLog(LOG_SOURCE.background, '完了', { requestId: options.requestId, ms: Date.now() - t0, requests: r.stats.requests, fallback: r.stats.fallback });
       await markUse();
       return { ok: true, model: options.model, ...r };
     } catch (e) {
       if (!(e instanceof CancelledError)) throw e;
-      addLog('裏方', '取り消し済み', { requestId: options.requestId, ms: Date.now() - t0 });
+      addLog(LOG_SOURCE.background, '取り消し済み', { requestId: options.requestId, ms: Date.now() - t0 });
       return { ok: false, cancelled: true };
     } finally {
       batches.delete(options.requestId);
@@ -89,11 +89,11 @@ const handlers = {
   },
   async [MSG.CACHE_LOOKUP](message, _sender, options) {
     const results = await lookupCached(message.texts, options);
-    addLog('裏方', '控え', { asked: message.texts.length, hits: results.filter((r) => r !== null).length });
+    addLog(LOG_SOURCE.background, 'キャッシュ', { asked: message.texts.length, hits: results.filter((r) => r !== null).length });
     return { ok: true, results, model: options.model };
   },
   async [MSG.CANCEL](message, sender) {
-    // 訳している問い合わせだけを取り消す。返事の後に届いた取り消しを覚えると、次のページの同じ番号を取り消してしまう。
+    // 訳しているリクエストだけを取り消す。返事の後に届いた取り消しを覚えると、次のページの同じ番号を取り消してしまう。
     const id = requestIdOf(sender, message.id);
     if (batches.has(id)) await cancel(id);
     return { ok: true };
@@ -106,7 +106,7 @@ const handlers = {
     return { ok: true };
   },
   async [MSG.LOG](message, sender) {
-    addLog(message.source ?? 'ページ', message.event, { ...message.data, tab: sender.tab?.id });
+    addLog(message.source ?? LOG_SOURCE.page, message.event, { ...message.data, tab: sender.tab?.id });
     return { ok: true };
   },
   async [MSG.LOGS_GET]() {
@@ -170,7 +170,7 @@ const handlers = {
   },
   async [MSG.PARTIAL](message) {
     if (streamPartial(message)) return { ok: true }; // テキスト翻訳の途中（core/engine.js）
-    // 見えないページから：まとめ訳しの途中。訳し終わった行（最後の行は途中なので除く）を、ページのまとまりの行へ戻して渡す。
+    // Offscreen Documentから：まとめ訳しの途中。訳し終わった行（最後の行は途中なので除く）を、ページのバッチの行へ戻して渡す。
     const rows = partialLines.get(message.requestId);
     const m = /^page:(\d+):(\d+):(\d+)$/.exec(message.requestId ?? '');
     if (!rows || !m) return { ok: true };
@@ -190,7 +190,7 @@ const handlers = {
 };
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  // 見えないページ宛ての依頼は、そちらが答える。ここで答えると、そちらの返事より先に届いてしまう。
+  // Offscreen Document宛てのメッセージは、そちらが答える。ここで答えると、そちらの返事より先に届いてしまう。
   if (message?.target === OFFSCREEN) return false;
   const handler = handlers[message?.type];
   if (!handler) return false;
@@ -198,7 +198,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     .then((options) => handler(message, sender, options))
     .then(sendResponse)
     .catch((e) => {
-      console.error('[Mockingword] 裏方で失敗', message.type, e?.stack ?? e);
+      console.error(`${LOG_TAG} Service Worker で失敗`, message.type, e?.stack ?? e);
       sendResponse({ ok: false, error: e.message });
     });
   return true; // 非同期で答える

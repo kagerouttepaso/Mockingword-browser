@@ -58,7 +58,7 @@ K量子化の `accumulate_vec_q_dot` は `repack_a`・`get_dm`・`get_scale_min`
 | 4 | 2 | 8.815 | 6.095 | 0.07851 | 0.13685 |
 | 8 | 29 | 15.387 | 11.360 | 0.14388 | 0.26201 |
 
-同じcandidateのround2では、厳密な8行は31 step、GPU15.274ms、MMVQ11.310ms/step。全50 decode stepを含めるとGPU12.925ms、MMVQ9.432ms/stepである。途中で本数が減ったstepを含む平均と、8行だけの平均を分けて比較する。
+同じcandidateのround2では、厳密な8行は31 step、GPU15.274ms、MMVQ11.310ms/step。全50 decode stepを含めるとGPU12.925ms、MMVQ9.432ms/stepである。途中で同時実行数が減ったstepを含む平均と、8行だけの平均を分けて比較する。
 
 基準 `1794232524570` は `gpuTiming` を保存していないため、同じ `analyzeGpuEvents` で既存eventsから再構成した。round2の1行52 stepはMMVQ2.766ms/step、Q4_K0.03135・Q6_K0.07421ms/dispatch。4行32 stepはMMVQ6.695ms/step、Q4_K0.08243・Q6_K0.16107ms/dispatchである。抽出は `node tools/wllama/patches/matmul/analyze-h8.mjs PROFILE_DIR` で再実行できる。
 

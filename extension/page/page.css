@@ -7,7 +7,7 @@ html.plamo-mode-orig .plamo-tr { display: none !important; }
 html:not(.plamo-mode-trans):not(.plamo-mode-orig):not(.plamo-mode-both) .plamo-tr { display: none !important; }
 
 /*
- * 訳している途中の段落（送ったまとまり）：原文を少し薄くするだけで、動かさない。
+ * 訳している途中の段落（送ったバッチ）：原文を少し薄くするだけで、動かさない。
  * 訳している間は、ページの描画と翻訳の計算が同じ GPU を使う。送った段落は1ページで百数十件になるので、
  * 段落ごとのアニメーションは、どの方式でも翻訳を遅くする（docs/04「待ちの見せ方」）。
  * 進み具合は上部のバーの線と待ち時間で見せる。

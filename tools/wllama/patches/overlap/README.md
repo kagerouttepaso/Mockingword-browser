@@ -1,6 +1,6 @@
 # H7：CPU の準備と GPU 実行の重なり
 
-調査結果は、64カーネル単位の分割 Submit が既に実装されている、というものだった。「全 encode の後、最後にまとめて Submit する」という H7 のコード上の前提は棄却する。今回の条件付き依頼に従い、追加の最適化パッチは作成していない。
+調査結果は、64カーネル単位の分割 Submit が既に実装されている、というものだった。「全 encode の後、最後にまとめて Submit する」という H7 のコード上の前提は棄却する。今回の条件付きリクエストに従い、追加の最適化パッチは作成していない。
 
 CPU と GPU が実際に重なる時間は、既存の排他集計からは求められない。ブラウザーへの Submit 呼出しと実際の GPU 開始は分けて観測する必要がある。分割粒度を小さくする案は、既存64カーネルを基準とする別の実験として扱う。
 
@@ -30,7 +30,7 @@ readback の主成分は GPU profile 専用の timestamp Map だった。token �
 
 otherWasm は、計測した子 scope の外側にある経過時間である。対象成果物の `ggml-backend.cpp` と `llama-context.cpp` には、現在の `profile/0002-cpu-stages.patch` が追加する scheduler・graph 構築の計測点が入っていなかった。従って llamaGraph／backendScheduler の0は、処理時間が0だった証拠には使えない。otherWasm には、それらの処理に加え、演算ごとの pipeline 選択・引数組立て、encoder の管理、timestamp 回収後の集計などが含まれ得る。2.351msを一律に GPU 開始前の CPU 時間へ割り当てる根拠はない。
 
-同じ29 step の `gpuTotalMs` 平均は15.428msだった。指定された計測フォルダーの8行 decode では、各 round の平均が15.194〜15.456msで、依頼にある12.8〜13.4msとは異なる。GPU timestamp の合計と wall time は時間軸も意味も異なるため、採否の前に集計対象をそろえる。
+同じ29 step の `gpuTotalMs` 平均は15.428msだった。指定された計測フォルダーの8行 decode では、各 round の平均が15.194〜15.456msで、リクエストにある12.8〜13.4msとは異なる。GPU timestamp の合計と wall time は時間軸も意味も異なるため、採否の前に集計対象をそろえる。
 
 ## 現行パッチ列の確認
 

@@ -1,14 +1,14 @@
 // PCの性能に合わせる速さの調整。設定画面の「このPCに合わせる」「今の設定で測る」から使う。
-// 同じ量の文章（ページの翻訳と同じ形のまとまり24、控えなし）を、設定を変えて読み込み直したモデルで訳し、かかった時間を比べる。
-// 控え（core/cache.js）は通さず、モデルへ直接問い合わせる。設計は docs/03_翻訳コア.md「PCに合わせる調整」。
+// 同じ量の文章（ページの翻訳と同じ形のバッチ24、キャッシュなし）を、設定を変えて読み込み直したモデルで訳し、かかった時間を比べる。
+// キャッシュ（core/cache.js）は通さず、モデルへ直接リクエストる。設計は docs/03_翻訳コア.md「PCに合わせる調整」。
 
 import { complete, status, unload } from '../core/engine.js';
-import { MSG } from '../shared/messages.js';
+import { LOG_SOURCE, MSG } from '../shared/messages.js';
 import { AUTO_PARALLEL_MAX, LOCAL_DEFAULTS, PARALLEL_CHOICES } from '../shared/settings.js';
 import { addLog } from './logs.js';
 
 /**
- * 測る文章。ページの翻訳と同じく、1行＝1段落の4行を1まとまりにする（1まとまり約200〜260字）。
+ * 測る文章。ページの翻訳と同じく、1行＝1段落の4行を1バッチにする（1バッチ約200〜260字）。
  * 毎回同じ文章なので、結果を設定どうしで比べられる。
  */
 const SAMPLE = [
@@ -23,9 +23,9 @@ const SAMPLE = [
 ].map((lines) => lines.join('\n'));
 
 /**
- * 1回に測るまとまり。SAMPLE の行を組み替えて24まとまりにする（i 番目の j 行目は (i + j*k) 番目の SAMPLE の j 行目、k = floor(i/8)）。
- * 24 は比べる本数（2・3・4・6・8）のどれでも割り切れるので、どの本数でも最後の巡に端数が出ない。8まとまりだと8本だけが1巡で終わり、
- * 3本・6本は端数の巡で不利になっていた（2026-11-10、docs/09「同時本数の上限」）。すべて別の文なので、控えも効かない。
+ * 1回に測るバッチ。SAMPLE の行を組み替えて24バッチにする（i 番目の j 行目は (i + j*k) 番目の SAMPLE の j 行目、k = floor(i/8)）。
+ * 24 は比べる同時実行数（2・3・4・6・8）のどれでも割り切れるので、どの同時実行数でも最後の巡に端数が出ない。8バッチだと8本だけが1巡で終わり、
+ * 3本・6本は端数の巡で不利になっていた（2026-11-10、docs/09「同時実行数の上限」）。すべて別の文なので、キャッシュも効かない。
  */
 const LINES = SAMPLE.map((s) => s.split('\n'));
 const WORK = Array.from({ length: 24 }, (_, i) => LINES[i % 8].map((_, j) => LINES[(i + j * Math.floor(i / 8)) % 8][j]).join('\n'));
@@ -42,7 +42,7 @@ function progress(data) {
 /** 測る回数。1回は数秒なので、中央値を取ってばらつきを抑える。 */
 const ROUNDS = 3;
 
-/** まとまり（既定は WORK の24）を parallel 本ずつ同時に訳す1回分。全体の時間と、最初のまとまりが返るまでの時間（画面内の目安）を返す。 */
+/** バッチ（既定は WORK の24）を parallel 本ずつ同時に訳す1回分。全体の時間と、最初のバッチが返るまでの時間（画面内の目安）を返す。 */
 async function round(options, work = WORK) {
   const queue = [...work];
   let tokens = 0;
@@ -67,14 +67,14 @@ const median = (a) => [...a].sort((x, y) => x - y)[a.length >> 1];
  * そのあと ROUNDS 回測って中央値を取り、ばらつき（最大と最小の差÷中央値）も返す。
  */
 async function measure(input) {
-  // 同じ文章を繰り返すので、控え（読み込み済みの原文）を切り、毎回原文を読み込ませる（実際のページと同じ条件）。
-  // 控えありでは検証環境Bの同時8本・8まとまりが2.3秒、控えなしでは3.9秒で、原文の読み込みの重さが比較から抜けていた（2026-11-10）。
+  // 同じ文章を繰り返すので、キャッシュ（読み込み済みの原文）を切り、毎回原文を読み込ませる（実際のページと同じ条件）。
+  // キャッシュありでは検証環境Bの同時8本・8バッチが2.3秒、キャッシュなしでは3.9秒で、原文の読み込みの重さが比較から抜けていた（2026-11-10）。
   const options = { ...input, noCache: true };
   const t0 = performance.now();
   await complete('Warm up the model.', options);
   const loadMs = Math.round(performance.now() - t0);
   const s = await status();
-  await round(options, SAMPLE); // 慣らしは8まとまりで足りる（GPU の準備が済めばよい）
+  await round(options, SAMPLE); // ウォームアップは8バッチで足りる（GPU の準備が済めばよい）
   const rs = [];
   for (let i = 0; i < ROUNDS && !running?.stop; i++) rs.push(await round(options));
   if (!rs.length) throw new Error('途中でやめました');
@@ -85,9 +85,9 @@ async function measure(input) {
 }
 
 /**
- * 試す設定の並び。最初に shared/settings.js の既定の本数を測り、比べる基準にする。
- * GPU は同時に訳す本数だけを比べる。ubatch は、まとまり1つの原文が約100〜150トークンでほぼ効かないので、今の値のまま（2026-11-09の測定）。
- * CPU はスレッド数と本数。
+ * 試す設定の並び。最初に shared/settings.js の既定の同時実行数を測り、比べる基準にする。
+ * GPU は同時に訳す同時実行数だけを比べる。ubatch は、バッチ1つの原文が約100〜150トークンでほぼ効かないので、今の値のまま（2026-11-09の測定）。
+ * CPU はスレッド数と同時実行数。
  */
 function* candidates(base, device) {
   if (device === 'cpu') {
@@ -101,7 +101,7 @@ function* candidates(base, device) {
   for (const parallel of [LOCAL_DEFAULTS.parallel, ...auto]) yield { ...base, parallel };
 }
 
-const label = (o, device) => (device === 'cpu' ? `CPU ${o.threads}スレッド・同時${o.parallel}本` : `同時${o.parallel}本・ubatch ${o.ubatch}`);
+const label = (o, device) => (device === 'cpu' ? `CPU ${o.threads}スレッド・同時${o.parallel}件` : `同時${o.parallel}件・ubatch ${o.ubatch}`);
 
 /** 今の設定で1回測る。 */
 export async function speedTest(options) {
@@ -111,7 +111,7 @@ export async function speedTest(options) {
     progress({ text: '今の設定で測っています…（モデルの読み込みを含め数十秒）' });
     const r = await measure(options);
     const row = { ...r, parallel: options.parallel, ubatch: options.ubatch, label: label({ ...options, threads: r.threads }, r.device) };
-    addLog('裏方', '速さの測定', row);
+    addLog(LOG_SOURCE.background, '速さの測定', row);
     return { ok: true, row };
   } finally {
     running = null;
@@ -147,13 +147,13 @@ export async function autoTune(options) {
     const ok = rows.filter((r) => !r.error);
     let b = [...ok].sort((x, y) => x.ms - y.ms)[0];
     if (!b) throw new Error('どの設定でも測れませんでした。');
-    // ばらつきで設定が毎回変わらないよう、既定の本数より、5%と既定の測定のばらつきの大きい方を超えて速いときだけ切り替える。
+    // ばらつきで設定が毎回変わらないよう、既定の同時実行数より、5%と既定の測定のばらつきの大きい方を超えて速いときだけ切り替える。
     const base0 = ok.find((r) => r.parallel === LOCAL_DEFAULTS.parallel && (device !== 'cpu' || r.threads === b.threads));
     if (base0 && b.ms > base0.ms * (1 - Math.max(0.05, base0.spread ?? 0))) b = base0;
     const chosen = { parallel: b.parallel, ubatch: b.ubatch, ...(device === 'cpu' ? { threads: b.threads } : {}) };
     const result = { at: Date.now(), model: options.model, device, adapter: rows.find((r) => r.adapter)?.adapter ?? null, rows, chosen, stopped: running.stop };
     await chrome.storage.local.set({ ...chosen, tuneResult: result });
-    addLog('裏方', 'PCに合わせる調整', result);
+    addLog(LOG_SOURCE.background, 'PCに合わせる調整', result);
     return { ok: true, result };
   } finally {
     running = null;

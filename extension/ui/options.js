@@ -1,5 +1,5 @@
 // 設定画面。選んだ値は chrome.storage.sync（同期する設定）か chrome.storage.local（PCごとの調整）に置き、
-// 裏方（background/config.js）が翻訳のたびに読む。
+// Service Worker（background/config.js）が翻訳のたびに読む。
 import { DEFAULTS, LOCAL_DEFAULTS, PARALLEL_CHOICES, UBATCH_CHOICES, fillLanguages, describeStatus, normalizeLocal } from '../shared/settings.js';
 import { MSG } from '../shared/messages.js';
 
@@ -8,7 +8,7 @@ document.getElementById('cores').textContent = cores;
 const threads = document.getElementById('threads');
 threads.append(new Option(`自動（${Math.max(1, Math.floor(cores / 2))}）`, '0'));
 for (let n = 1; n <= cores; n++) threads.append(new Option(String(n), String(n)));
-for (const n of PARALLEL_CHOICES) document.getElementById('parallel').append(new Option(`${n}本${n === LOCAL_DEFAULTS.parallel ? '（既定）' : ''}`, String(n)));
+for (const n of PARALLEL_CHOICES) document.getElementById('parallel').append(new Option(`${n}件${n === LOCAL_DEFAULTS.parallel ? '（既定）' : ''}`, String(n)));
 for (const n of UBATCH_CHOICES) document.getElementById('ubatch').append(new Option(`${n}${n === LOCAL_DEFAULTS.ubatch ? '（既定）' : ''}`, String(n)));
 fillLanguages(document.getElementById('source'));
 
@@ -101,7 +101,7 @@ speedBtn.onclick = async () => {
     return;
   }
   const row = r.row;
-  tuneState.textContent = `今の設定（${row.device === 'cpu' ? 'CPU' : 'GPU'}・${row.label}）：24まとまり（控えなし）を ${(row.ms / 1000).toFixed(2)}秒（3回の中央値）、最初の1まとまりは ${(row.firstMs / 1000).toFixed(2)}秒、${row.tps} トークン/秒（読み込みと慣らしの1回は含めない）`;
+  tuneState.textContent = `今の設定（${row.device === 'cpu' ? 'CPU' : 'GPU'}・${row.label}）：試験用の文章24件（キャッシュなし）を ${(row.ms / 1000).toFixed(2)}秒（3回の中央値）、最初の1件は ${(row.firstMs / 1000).toFixed(2)}秒、${row.tps} トークン/秒（モデルの読み込みと、最初の準備の1回は含めない）`;
   render();
 };
 
@@ -110,7 +110,7 @@ function showTuneResult(t) {
   if (!t) return;
   const when = new Date(t.at).toLocaleString('ja-JP');
   const c = t.chosen;
-  const how = t.device === 'cpu' ? `CPU ${c.threads}スレッド・同時${c.parallel}本` : `同時${c.parallel}本・ubatch ${c.ubatch}`;
+  const how = t.device === 'cpu' ? `CPU ${c.threads}スレッド・同時${c.parallel}件` : `同時${c.parallel}件・ubatch ${c.ubatch}`;
   tuneState.textContent = `${when} に ${t.model}・${t.device === 'cpu' ? 'CPU' : `GPU（${t.adapter ?? '名前不明'}）`} で合わせ、${how} を選びました${t.stopped ? '（途中でやめたので、そこまでの結果から選択）' : ''}。`;
   showRows(t.rows, c);
 }
@@ -123,7 +123,7 @@ unload.onclick = async () => {
   render();
 };
 
-/** モデルを読み込む前に出す、この画面から見える WebGPU の GPU の名前（見えないページも同じものを使う）。 */
+/** モデルを読み込む前に出す、この画面から見える WebGPU の GPU の名前（Offscreen Documentも同じものを使う）。 */
 async function gpuName() {
   try {
     const a = await navigator.gpu?.requestAdapter();
@@ -145,13 +145,13 @@ async function render() {
 render();
 setInterval(render, 30_000);
 
-// ---- 訳の控えの件数と大きさ ----
+// ---- 訳文のキャッシュの件数と大きさ ----
 const mb = (bytes) => (bytes >= 1e9 ? `${(bytes / 1e9).toFixed(2)} GB` : `${(bytes / 1e6).toFixed(1)} MB`);
 async function renderCache() {
   const s = await chrome.runtime.sendMessage({ type: MSG.CACHE_STATS });
   if (!s?.ok) return;
   const usage = s.usage != null ? `。拡張機能がブラウザーの中で使っている量の合計は約 ${mb(s.usage)}（翻訳モデルを含む）` : '';
-  document.getElementById('cachestats').textContent = `訳の控え：${s.count.toLocaleString()} 件（上限 ${s.limit.toLocaleString()} 件）・約 ${mb(s.bytes)}${usage}`;
+  document.getElementById('cachestats').textContent = `翻訳のキャッシュ：${s.count.toLocaleString()} 件（上限 ${s.limit.toLocaleString()} 件）・約 ${mb(s.bytes)}${usage}`;
 }
 document.getElementById('cacheclear').onclick = async (e) => {
   e.target.disabled = true;

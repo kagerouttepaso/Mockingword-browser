@@ -35,7 +35,7 @@ grep '^EMSCRIPTEN_SYSTEM_PROCESSOR:STRING=wasm32$' "$BUILD_DIR/CMakeCache.txt"
 
 `arch/wasm/quants.c.o` が1件以上見つかり、test と grep が終了コード0になることを確認する。configure ログの `Wasm detected` と、CPU のコンパイル指定 `-msimd128` も確認する。以前の CMake キャッシュを手動流用した場合は、空の build ディレクトリで再構成する。
 
-CPU モード（`n_gpu_layers:0`）で同じモデル・threads・入力・同時本数を固定し、基準版と交互に3組以上測る。prefill、decode、全体時間、出力 token 数、訳と目印の一致を比較する。WebGPU モードも局所確認し、CPU 側へ残る演算の回帰を確認する。
+CPU モード（`n_gpu_layers:0`）で同じモデル・threads・入力・同時実行数を固定し、基準版と交互に3組以上測る。prefill、decode、全体時間、出力 token 数、訳とマーカーの一致を比較する。WebGPU モードも局所確認し、CPU 側へ残る演算の回帰を確認する。
 
 ## 出典とライセンス
 

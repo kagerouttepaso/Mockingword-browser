@@ -1,5 +1,5 @@
-// ネイティブ（llama-server、Vulkan）で、tools/parallel-sweep.mjs と同じ題材・プロンプト・本数を測る。
-// 条件は docs/09「ネイティブとの比較」と同じ：本数＋1のスロット、--swa-full、-ngl 99 -b 2048 -ub 512、cache_prompt: false。
+// ネイティブ（llama-server、Vulkan）で、tools/parallel-sweep.mjs と同じ計測対象・プロンプト・同時実行数を測る。
+// 条件は docs/09「ネイティブとの比較」と同じ：同時実行数＋1のスロット、--swa-full、-ngl 99 -b 2048 -ub 512、cache_prompt: false。
 // 実行：node tools/native-sweep.mjs <llama-server.exe> <model.gguf> [--plan 8x4,8x8,32x4,32x8,32x16] [--out 結果.json]
 //   plan の「NxP」は parallel-sweep.mjs と同じ。拡張と同じ GGUF（WORK/models の照合済みの物）を渡すと、出力トークン数まで一致する。
 //   ブラウザーで翻訳しながら測ると値が乱れる（docs/09「ネイティブとの比較」）。
@@ -64,7 +64,7 @@ for (const [n, parallel] of plan) {
     const ms = median(rs.map((r) => r.ms)), tokens = median(rs.map((r) => r.tokens));
     const r = { n, parallel, ms: Math.round(ms), all: rs.map((r) => Math.round(r.ms)), firstMs: Math.round(median(rs.map((r) => r.first))), tokens, tps: +((tokens / ms) * 1000).toFixed(1) };
     results.push({ started: new Date().toISOString(), ...r });
-    console.log(`ネイティブ ${n}まとまり・同時${String(parallel).padStart(2)}本：${(r.ms / 1000).toFixed(2)}秒 [${r.all.map((x) => (x / 1000).toFixed(2)).join(', ')}]  最初 ${(r.firstMs / 1000).toFixed(2)}秒  ${r.tps} トークン/秒`);
+    console.log(`ネイティブ ${n}バッチ・同時${String(parallel).padStart(2)}本：${(r.ms / 1000).toFixed(2)}秒 [${r.all.map((x) => (x / 1000).toFixed(2)).join(', ')}]  最初 ${(r.firstMs / 1000).toFixed(2)}秒  ${r.tps} トークン/秒`);
   } finally {
     s.p.kill();
     await new Promise((r) => setTimeout(r, 1500));

@@ -19,7 +19,7 @@ export function showingTranslation() {
   return html.classList.contains('plamo-mode-trans') || html.classList.contains('plamo-mode-both');
 }
 
-/** 写した要素から、元の要素の id と拡張機能の印を外す。中の原文の包みは外し、訳文は除く。 */
+/** 写した要素から、元の要素の id と拡張機能の印を外す。中の原文のラッパーは外し、訳文は除く。 */
 function clean(el) {
   for (const x of [el, ...el.querySelectorAll('[id], [data-plamo-hide]')]) {
     x.removeAttribute('id');
@@ -31,8 +31,8 @@ function clean(el) {
 }
 
 /**
- * 訳文を要素に戻す。目印の読み取りと崩れの扱いは shared/markup.js の decode が行い、ここは木を DOM にするだけ：
- * 入れ物（wrap）は元の要素の写し（属性はそのまま、中身は訳文）、写す要素・文字の無い要素は元の要素をそのまま写す。
+ * 訳文を要素に戻す。マーカーの読み取りと崩れの扱いは shared/markup.js の decode が行い、ここは木を DOM にするだけ：
+ * 要素（wrap）は元の要素のコピー（属性はそのまま、中身は訳文）、写す要素・文字の無い要素は元の要素をそのまま写す。
  * 訳文の文字は文字のノードとして入れる（モデルの出力を HTML として解釈しない）。
  */
 export function render(translation, marks) {
@@ -48,8 +48,8 @@ export function render(translation, marks) {
 }
 
 /**
- * 原文の文字のノードを <span data-plamo-orig> で包み、包みの並びを返す（既に包んでいればそれを使う）。
- * 包みの値は、訳文が届く前は空、届いたら 'done'。訳文表示で隠すのは 'done' の包みだけ（page.css）。
+ * 原文の文字のノードを <span data-plamo-orig> で包み、ラッパーの並びを返す（既に包んでいればそれを使う）。
+ * ラッパーの値は、訳文が届く前は空、届いたら 'done'。訳文表示で隠すのは 'done' のラッパーだけ（page.css）。
  */
 function wrapOriginal(para) {
   const wraps = [];
@@ -68,10 +68,10 @@ function wrapOriginal(para) {
 }
 
 /**
- * 段落に訳文を書き込む。原文の包みに 'done' を付け（訳文表示で隠れる）、訳文の <span class="plamo-tr"> を段落の中へ置く。
+ * 段落に訳文を書き込む。原文のラッパーに 'done' を付け（訳文表示で隠れる）、訳文の <span class="plamo-tr"> を段落の中へ置く。
  */
 export function apply(para, translation) {
-  const first = para.translation == null; // 先出しの後に最後の返事で書き直すときは、数え直さない
+  const first = para.translation == null; // 途中表示の後に最後の返事で書き直すときは、数え直さない
   para.translation = translation;
   const nodes = para.nodes.filter((n) => n.isConnected);
   if (nodes.length === 0) return;
@@ -101,7 +101,7 @@ export function apply(para, translation) {
 }
 
 /**
- * 訳している途中の段落（送ったまとまり）の印を付ける・外す。原文の文字を包み、包みに data-plamo-working を付けると、
+ * 訳している途中の段落（送ったバッチ）の属性を付ける・外す。原文の文字を包み、ラッパーに data-plamo-working を付けると、
  * page.css がその原文を少し薄くする。訳を待つだけの段落には付けない。
  */
 export function setWorking(paras, on) {
@@ -114,7 +114,7 @@ export function setWorking(paras, on) {
   }
 }
 
-/** 書き込んだ訳文をすべて消し、原文の包みを外して元のページに戻す。 */
+/** 書き込んだ訳文をすべて消し、原文のラッパーを外して元のページに戻す。 */
 export function removeAll() {
   for (const span of document.querySelectorAll('.plamo-tr')) span.remove();
   for (const wrap of document.querySelectorAll('[data-plamo-orig]')) wrap.replaceWith(...wrap.childNodes);

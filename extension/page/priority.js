@@ -126,9 +126,9 @@ export function onScreen(para) {
 }
 
 /**
- * 画面内の本文の見出し・第1段落か。これが残っている間は、後ろの段のまとまりを同時に送らない（queue.js の pump）。
+ * 画面内の本文の見出し・第1段落か。これが残っている間は、後ろの段のバッチを同時に送らない（queue.js の pump）。
  * 同時に送ると、長い本文・注記が計算を分け合い、見出しの訳が遅れる（2026-11-12、GitHub の Copilot の Models のページで、
- * 8件のモデル名のまとまりが、同時に送った約790字の注記3件と取り合って約12秒かかっていた）。
+ * 8件のモデル名のバッチが、同時に送った約790字の注記3件と取り合って約12秒かかっていた）。
  */
 export function isFront(para) {
   return READING_TIER[para.kind ?? 'body'] <= READING_TIER.lead && regionOf(para) !== 'nav' && onScreen(para);

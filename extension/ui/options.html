@@ -55,7 +55,7 @@
       <span class="buttons"><button id="tune">このPCに合わせる</button><button id="tunestop" hidden>途中でやめる</button><button id="speed">今の設定で測る</button></span>
     </div>
     <table id="tunerows" hidden>
-      <thead><tr><th>設定</th><th>24まとまりを訳す時間（控えなし）</th><th>最初の1まとまり</th><th>生成の速さ</th><th></th></tr></thead>
+      <thead><tr><th>設定</th><th>試験用の文章24件を訳す時間（キャッシュなし）</th><th>最初の1件</th><th>生成の速さ</th><th></th></tr></thead>
       <tbody></tbody>
     </table>
     <h3>動作モード</h3>
@@ -64,8 +64,8 @@
     <label><input type="radio" name="device" value="cpu"> CPU</label>
     <small>使う GPU：<span id="adapter">確認中…</span></small>
     <h3>細かい調整</h3>
-    <label class="inline">同時に訳す本数 <select name="parallel" id="parallel"></select></label>
-    <br><small>ページの翻訳で同時にモデルへ送るまとまりの数です。GPU の性能に余裕があるほど、多くすると全体が速くなります。多すぎると1本ずつが遅くなり、画面内が出るまでが延びます。</small>
+    <label class="inline">同時に翻訳する数 <select name="parallel" id="parallel"></select></label>
+    <br><small>ページの翻訳で、同時にモデルへ送る文章のまとめの数です。GPU の性能に余裕があるほど、多くすると全体が速くなります。多すぎると1件ずつが遅くなり、画面内が出るまでが延びます。</small>
     <br><label class="inline">GPU へ一度に渡す量（ubatch） <select name="ubatch" id="ubatch"></select></label>
     <br><small>原文を読み込むときに GPU へまとめて渡すトークン数です。単体GPUでは大きくすると速くなることがあり、内蔵GPUではメモリーを多く使うだけのことがあります。</small>
     <br><label class="inline">CPU のスレッド数 <select name="threads" id="threads"></select></label>
@@ -86,10 +86,10 @@
     <br><small>解放した後は、次に訳すときに読み込み直します（保存済みのモデルから数秒）。</small>
     <div id="status"><span>確認中…</span><button id="unload">今すぐ解放</button></div>
     <div id="cache" style="margin-top: 8px; padding: 8px 12px; border-radius: 6px; background: var(--panel); display: flex; align-items: center; gap: 8px;">
-      <span id="cachestats" style="flex: 1;">訳の控え：確認中…</span>
-      <button id="cacheclear">控えを消す</button>
+      <span id="cachestats" style="flex: 1;">翻訳のキャッシュ：確認中…</span>
+      <button id="cacheclear">キャッシュを消す</button>
     </div>
-    <small>訳の控えは、一度訳した文と訳文の組です。同じ文はモデルを使わずすぐ出します。最大2万件で、超えると古く使ったものから消します。</small>
+    <small>翻訳のキャッシュは、一度訳した文と訳文の組です。同じ文はモデルを使わずすぐ出します。最大2万件で、超えると古く使ったものから消します。</small>
   </fieldset>
 
   <fieldset>
@@ -120,7 +120,7 @@
 
   <fieldset>
     <legend>調査用のログ</legend>
-    <label><input type="checkbox" name="debugLog" id="debugLog"> ログを残す（ページ・裏方・モデルの出来事を時刻付きで記録する）</label>
+    <label><input type="checkbox" name="debugLog" id="debugLog"> ログを残す（ページ・拡張機能の内部処理・モデルの出来事を時刻付きで記録する）</label>
     <small>翻訳が遅い・止まるときにオンにして同じ操作をし、「ログを保存」したファイルを確認してください。記録はこのブラウザーの中だけにあり、
       ブラウザーを閉じるか拡張機能を読み込み直すと消えます。ページの文は先頭60字だけを残します。</small>
     <div id="logbox" style="margin-top: 8px; display: flex; gap: 8px; align-items: center;">

@@ -1,5 +1,5 @@
-// 未使用時のモデルの解放。最後に訳した時刻を storage.session に置き（裏方が止まっても消えない）、
-// 1分おきに見て、設定の分数を過ぎたら見えないページごと閉じる。設計は docs/03_翻訳コア.md「メモリーの解放」。
+// 未使用時のモデルの解放。最後に訳した時刻を storage.session に置き（Service Workerが止まっても消えない）、
+// 1分おきに見て、設定の分数を過ぎたらOffscreen Documentごと閉じる。設計は docs/03_翻訳コア.md「メモリーの解放」。
 
 import { status, unload } from '../core/engine.js';
 import { settings } from './config.js';
@@ -34,7 +34,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   console.info(`[Mockingword] ${idleMinutes}分使わなかったのでモデルを解放しました`);
 });
 
-// PCごとの調整（動作モード・スレッド数・同時に訳す本数・ubatch）を変えたら、今のモデルを解放する（次に訳すときに新しい設定で読み込む）。
+// PCごとの調整（動作モード・スレッド数・同時に訳す同時実行数・ubatch）を変えたら、今のモデルを解放する（次に訳すときに新しい設定で読み込む）。
 // 速さの調整（tune.js）が試している間は、試す側が読み込みを切り替えるので解放しない。
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && !tuning() && (changes.device || changes.threads || changes.parallel || changes.ubatch)) unload();

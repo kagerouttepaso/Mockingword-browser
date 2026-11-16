@@ -54,7 +54,7 @@ node tools/wllama/build.mjs --variant profile
 node tools/profile.mjs
 ```
 
-profile.mjs の既定は、両モデルについて distribution → baseline → profile → baseline → distribution の順で測る。各起動は新しいプロファイルで、慣らし1回と3回の計測をまとめて行う。モデルは固定URL・サイズ・SHAを共有キャッシュで確認し、同じバイトをローカルから供給する。取得・照合は測定前にモデルごとに1回行う。
+profile.mjs の既定は、両モデルについて distribution → baseline → profile → baseline → distribution の順で測る。各起動は新しいプロファイルで、ウォームアップ1回と3回の計測をまとめて行う。モデルは固定URL・サイズ・SHAを共有キャッシュで確認し、同じバイトをローカルから供給する。取得・照合は測定前にモデルごとに1回行う。
 
 共有キャッシュの既定は LOCALAPPDATA 配下の plamo-translate-build/models。PLAMO_MODEL_CACHE または --model-cache で変更できる。PLAMO_MODEL_CACHE_OFFLINE=1 では未準備のモデルを取得せず停止する。準備用は tools/lib/model-cache.mjs、接続確認用は tools/lib/model-cache-probe.mjs。Fetchを持たないWorkerでは実行前のfetchフックを使い、漏れはNetwork監視と供給量の確認で検出する。
 
@@ -65,7 +65,7 @@ node tools/profile.mjs --models 2B --variants baseline,profile --parallel 4 --ub
 
 profile.mjs は開始時の extension を WORK へコピーし、そのコピーだけで vendor を入れ替える。さらに、コピーへ計測用の hook と実行口を追加し、既存の tune.js の SAMPLE を共有する。manifest の権限と配布する extension は維持する。
 
-測定は tools/tune.mjs と同じ8まとまりを使い、モデルの読み込みと慣らし1回を除き、3回の中央値・ばらつき・最初のまとまりまでの時間・tokens/s を出す。追加の目印つき文章は、時間測定が終わってから訳す。通しの e2e は実行しない。
+測定は tools/tune.mjs と同じ8バッチを使い、モデルの読み込みとウォームアップ1回を除き、3回の中央値・ばらつき・最初のバッチまでの時間・tokens/s を出す。追加のマーカーつき文章は、時間測定が終わってから訳す。通しの e2e は実行しない。
 
 結果は WORK/profiles/時刻 に保存する。
 
@@ -111,7 +111,7 @@ node tools/bench-loop.mjs --variant profile --candidate tools/wllama/patches/sam
 
 buildの工程は WORK/logs/build-variant-時刻-timings.json、CMake・C++・JSなどのコンテナー内訳は build manifest の containerTimings に残す。compiledObjects、sourceFilesCopied、各cache hitも記録する。成果物再利用時には過去のコンパイル時間を今回の時間へ混ぜない。Docker外枠はホストの所要時間からコンテナー内の所要時間を引いた値で、起動・終了・転送を含む。
 
-計測は拡張コピー、Brave接続・拡張準備、共有モデル準備、読込み、慣らし、計測本体、後片付けを記録する。モデルURL読込みの内側でloadModelを計測できた場合はnative読込みも示す。計測値そのものにはブラウザー内の8まとまりの時間を使い、セットアップ時間は加えない。
+計測は拡張コピー、Brave接続・拡張準備、共有モデル準備、読込み、ウォームアップ、計測本体、後片付けを記録する。モデルURL読込みの内側でloadModelを計測できた場合はnative読込みも示す。計測値そのものにはブラウザー内の8バッチの時間を使い、セットアップ時間は加えない。
 
 ```powershell
 node tools/profile/cycle-compare.mjs --loops '<1周目の結果フォルダー>,<2周目の結果フォルダー>'
@@ -119,15 +119,15 @@ node tools/profile/cycle-compare.mjs --loops '<1周目の結果フォルダー>,
 
 1周目と同じ入力の2周目、その後のコード差分の周を比べる。models・parallel・追加項目・比較順をそろえ、初回構成、差分コンパイル、成果物再利用を区別する。親工程は子工程を含むので、表の列を単純加算して全体時間にしない。
 
-baselineVsDistribution.translationsMatch は訳文そのものの完全一致を示す。token 数と cut の一致は translations.tokenCountsMatch / cutStatesMatch に分ける。版内の変動は translations.referenceVariation / candidateVariation に残す。differences は異なるまとまり・行・実際の訳文を示す。
+baselineVsDistribution.translationsMatch は訳文そのものの完全一致を示す。token 数と cut の一致は translations.tokenCountsMatch / cutStatesMatch に分ける。版内の変動は translations.referenceVariation / candidateVariation に残す。differences は異なるバッチ・行・実際の訳文を示す。
 
-訳の受入は translationsAccepted で確認する。全試行の完全一致は exact、基準版でも実際に得られた別訳の範囲なら observed-reference-variation とする。後者は、候補の全別訳を基準版で観測し、1回あたりの変動まとまり数が基準版の最大値以内で、両版とも打ち切りがない場合に限る。候補版だけに出た別訳は review-required で停止する。
+訳の受入は translationsAccepted で確認する。全試行の完全一致は exact、基準版でも実際に得られた別訳の範囲なら observed-reference-variation とする。後者は、候補の全別訳を基準版で観測し、1回あたりの変動バッチ数が基準版の最大値以内で、両版とも打ち切りがない場合に限る。候補版だけに出た別訳は review-required で停止する。
 
-qualityMatch は追加の目印つき文章の一致、markersPreserved は a1 / a2 の両目印を確認する。withinVariation は、時間差が両版のばらつきと5%の大きい方に収まるかを示す。profileOverhead.delta は baseline に対する profile の中央値の増加率で、計測コードの上乗せを判断する材料になる。
+qualityMatch は追加のマーカーつき文章の一致、markersPreserved は a1 / a2 の両マーカーを確認する。withinVariation は、時間差が両版のばらつきと5%の大きい方に収まるかを示す。profileOverhead.delta は baseline に対する profile の中央値の増加率で、計測コードの上乗せを判断する材料になる。
 
-訳文・目印の保持、または baseline の速度の照合に通らない場合は、結果を保存して終了コード2を返す。report.json の acceptance と比較値を確認して採否を決める。usage の token 数を取得できなかった回は tokenFallback を記録し、表の tokens/s を「取得不能」と表示する。
+訳文・マーカーの保持、または baseline の速度の照合に通らない場合は、結果を保存して終了コード2を返す。report.json の acceptance と比較値を確認して採否を決める。usage の token 数を取得できなかった回は tokenFallback を記録し、表の tokens/s を「取得不能」と表示する。
 
-別訳の原因を調べる場合は、同じ8まとまりの追加試行を指定する。追加分は慣らし後の速度3回の中央値・ばらつきに含めず、版内・版間の訳の比較へ使う。基準版でも同じ別訳が出ることを確認するために使う。
+別訳の原因を調べる場合は、同じ8バッチの追加試行を指定する。追加分はウォームアップ後の速度3回の中央値・ばらつきに含めず、版内・版間の訳の比較へ使う。基準版でも同じ別訳が出ることを確認するために使う。
 
 ```powershell
 node tools/profile.mjs --models 0.8B --variants distribution,baseline --parallel 4 --quality-replays 12
@@ -188,7 +188,7 @@ profile-gpu は upstream の GGML_WEBGPU_GPU_PROFILE を有効にする。pipeli
 | KV など logits 以外の hostCopy が大きい | checkpoint / prompt cache の発生箇所と公開 JS 設定の伝達確認 |
 | Worker 外の往復・空 poll が大きい | 結果のまとめ受取り、poll の削減 |
 
-同期、MMVQ、KV、sampling の最適化は別パッチとして加え、各変更を baseline の速度と訳文で評価する。sampling を変える場合は同点選択、目印、出力 token 列も照合する。
+同期、MMVQ、KV、sampling の最適化は別パッチとして加え、各変更を baseline の速度と訳文で評価する。sampling を変える場合は同点選択、マーカー、出力 token 列も照合する。
 
 ## 失敗したときと別 PC での再開
 
@@ -200,7 +200,7 @@ profile-gpu は upstream の GGML_WEBGPU_GPU_PROFILE を有効にする。pipeli
 
 別 PC では固定済み pins.json を含むこのフォルダーを取得し、Node・Git・Docker Desktop・Brave を用意する。baseline → profile → profile.mjs の順に実行すると、その PC の環境変数から WORK が決まる。個別 PC のパスや GPU 名は、WORK に出る計測結果へ記録する。
 
-採否の関門（訳文・打ち切り・目印の照合）を変えたら、次のコマンドで確かめる（`docs/06`「常設の単体試験が守るもの」）。
+採否の関門（訳文・打ち切り・マーカーの照合）を変えたら、次のコマンドで確かめる（`docs/06`「常設の単体試験が守るもの」）。
 
 ```powershell
 node --test tools/profile/comparison.test.mjs
@@ -221,5 +221,5 @@ node tools/setup-bench.mjs
 - 最後に `profile.mjs` を1回起動し、0.8B・キャッシュなしで基準→候補→基準を交互に測る。基準は配布物と同じ設定（`backend_sampling:false`・`samplers:null`）、候補は拡張の既定の設定。`--parallel 8` で同時8本、`--skip-check` で確認計測を省く。終了時に `WORK/profiles/<時刻>/summary.md` の場所を出す。
 - 2回目以降も同じコマンドでよい。ビルドは入力 hash と成果物の SHA、モデルは SHA が一致すれば再利用する（検証環境Aで2回目は約1秒）。確認計測は毎回新しく行う。
 - 保存先は `PLAMO_BUILD_ROOT`／`--work-root`、モデルは `PLAMO_MODEL_CACHE`／`--model-cache`、Brave は `BRAVE` 環境変数で変えられる。メモリー不足は `--jobs 4`、ポートの競合は `--port 9351`。
-- 終了コード1は前提不足や処理の失敗で、対処を表示する。終了コード2は訳・目印に要確認の差がある状態で、`summary.md` と `report.json` を見て判断する。工程の記録は `WORK/logs/setup-bench.json`。
+- 終了コード1は前提不足や処理の失敗で、対処を表示する。終了コード2は訳・マーカーに要確認の差がある状態で、`summary.md` と `report.json` を見て判断する。工程の記録は `WORK/logs/setup-bench.json`。
 - 内蔵GPU（Radeon 860M など）で WebGPU が別の adapter を選ぶときは、結果の adapter 名を `summary.md` で確かめる。

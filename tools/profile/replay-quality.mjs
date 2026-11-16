@@ -1,10 +1,11 @@
 // tools/page-replay.mjs の訳の品質を、版どうしで比べられる形にまとめる。
-// 正解訳はないので、機械的に数えられる崩れ（行のずれ・打ち切り・目印・英字のまま）と、版どうしで訳が変わった段落を出す。
+// 正解訳はないので、機械的に数えられる崩れ（行のずれ・打ち切り・マーカー・英字のまま）と、版どうしで訳が変わった段落を出す。
 // 変わった段落は対訳表にして、人が読んで良し悪しを判断する。
 
 import { MARK_TAG } from '../../extension/shared/markup.js';
+import { LOG_SOURCE } from '../../extension/shared/messages.js';
 
-const MARK = new RegExp(MARK_TAG.source); // 目印の文法の正本（g なしで test する）
+const MARK = new RegExp(MARK_TAG.source); // マーカーの文法の正本（g なしで test する）
 
 /** 英字の語が残っているか。原文に英字の語が3つ以上あり、訳文の文字の半分以上が英字なら「英字のまま」と数える。 */
 export function untranslated(source, translation) {
@@ -15,13 +16,13 @@ export function untranslated(source, translation) {
   return (letters.match(/[A-Za-z]/g) ?? []).length / letters.length >= 0.5;
 }
 
-/** 1回分の崩れを数える。traces は調査用のログ（裏方の「完了」に fallback、model の「生成」に cut が入る）。 */
+/** 1回分の崩れを数える。traces は調査用のログ（Service Workerの「完了」に fallback、model の「生成」に cut が入る）。 */
 export function qualityStats(pairs, traces) {
   return {
     paragraphs: pairs.length,
-    requests: traces.filter((e) => e.source === '裏方' && e.event === '完了').length,
-    fallbackRequests: traces.filter((e) => e.source === '裏方' && e.event === '完了' && e.fallback).length,
-    cutGenerations: traces.filter((e) => e.source === 'model' && e.event === '生成' && e.cut).length,
+    requests: traces.filter((e) => e.source === LOG_SOURCE.background && e.event === '完了').length,
+    fallbackRequests: traces.filter((e) => e.source === LOG_SOURCE.background && e.event === '完了' && e.fallback).length,
+    cutGenerations: traces.filter((e) => e.source === LOG_SOURCE.model && e.event === '生成' && e.cut).length,
     brokenMarks: pairs.filter((p) => MARK.test(p.translation)).length,
     untranslated: pairs.filter((p) => untranslated(p.source, p.translation)).length,
     empty: pairs.filter((p) => !p.translation).length,
@@ -86,7 +87,7 @@ const cell = (s) => s.replace(/\|/g, '\\|');
 /** 対訳表（Markdown）。 */
 export function qualityReport({ names, stats, comparison, target }) {
   const lines = [`# 訳の比較：${target}`, '', '## 崩れの数', '', `| | ${names.join(' | ')} |`, `| --- | ${names.map(() => '---:').join(' | ')} |`];
-  const labels = { paragraphs: '訳した段落', requests: '依頼', fallbackRequests: '行がずれて1行ずつ訳し直した依頼', cutGenerations: '止まらず打ち切った生成', brokenMarks: '目印が崩れた段落', untranslated: '英字のまま', empty: '訳が空' };
+  const labels = { paragraphs: '訳した段落', requests: '依頼', fallbackRequests: '行がずれて1行ずつ訳し直した依頼', cutGenerations: '止まらず打ち切った生成', brokenMarks: 'マーカーが崩れた段落', untranslated: '英字のまま', empty: '訳が空' };
   for (const [k, label] of Object.entries(labels)) lines.push(`| ${label} | ${stats.map((s) => s[k]).join(' | ')} |`);
   lines.push('', `## 訳が変わった段落（${names[0]} と ${names[1]}）`, '', `原文で突き合わせた ${comparison.compared}段落のうち、同じ ${comparison.same}、変わった ${comparison.changed}（片方にしかない原文 ${comparison.missing}）。`, '', `| 原文 | ${names[0]} | ${names[1]} |`, '| --- | --- | --- |');
   for (const r of comparison.rows) lines.push(`| ${cell(r.source)} | ${cell(r.reference)} | ${cell(r.candidate)} |`);

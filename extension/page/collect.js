@@ -1,5 +1,5 @@
-// 段落を集める。ページの文字のノードを、見た目の段落（ブロック要素）ごとにまとめ、項目のまとまり（group）を決める。
-// 要素の判定は page/dom.js、段落の中身の読み取りと目印は page/paragraph.js。設計は docs/04_ページの翻訳.md「段落の集め方」。
+// 段落を集める。ページの文字のノードを、見た目の段落（ブロック要素）ごとにまとめ、項目のグループ（group）を決める。
+// 要素の判定は page/dom.js、段落の中身の読み取りとマーカーは page/paragraph.js。設計は docs/04_ページの翻訳.md「段落の集め方」。
 
 import { worthTranslating } from '../shared/text.js';
 import { OWN, blockOf, isInlineCode, skipElement } from './dom.js';
@@ -12,9 +12,9 @@ const HEADING = 'h1, h2, h3, h4, h5, h6, [role="heading"]';
 const NAV_GROUP = 'nav, [role="navigation"], footer, [role="contentinfo"]';
 
 /**
- * 項目のまとまり。最も内側のリスト・ナビ・ツリーの枝・表の行などの要素そのものを鍵にする。
+ * 項目のグループ。最も内側のリスト・ナビ・ツリーの枝・表の行などの要素そのものを鍵にする。
  * 見出しだけで節を推測すると短い本文まで項目扱いになるため、構造が明示されていない段落は本文に残す。
- * DOMの移動にも追従できるよう、送り出す直前にも取り直す。レイアウトの測定は行わない。
+ * DOMの移動にも追従できるよう、送信する直前にも取り直す。レイアウトの測定は行わない。
  */
 export function groupOf(element, nodes = []) {
   // ナビの見出しも本文として訳す。目次のリンク群に混ぜて文の続きとして訳させない。
@@ -64,7 +64,7 @@ export function collect(root) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       if (node.nodeType === Node.ELEMENT_NODE) {
-        if (isInlineCode(node)) return NodeFilter.FILTER_SKIP; // 中へ入る（目印で囲み、訳文に原文のまま戻す）
+        if (isInlineCode(node)) return NodeFilter.FILTER_SKIP; // 中へ入る（マーカーで囲み、訳文に原文のまま戻す）
         return skipElement(node) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_SKIP;
       }
       if (state.seen.has(node) || !/\S/.test(node.data)) return NodeFilter.FILTER_SKIP;

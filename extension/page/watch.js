@@ -9,9 +9,9 @@ function applyMockingwordTheme(value) {
 chrome.storage.sync.get({theme:'system'}).then(s=>applyMockingwordTheme(s.theme)).catch(()=>{});
 chrome.storage.onChanged.addListener((c,area)=>{if(area==='sync'&&c.theme)applyMockingwordTheme(c.theme.newValue)});
 // すべてのページに入れる小さな部品。次の2つだけを行い、ページの文字を外へ送ることはない。
-// 1. ページを読み込んだことを裏方へ知らせる（同じサイト内で移ったページも続けて訳すため。ホスト名だけ）。
+// 1. ページを読み込んだことをService Workerへ知らせる（同じサイト内で移ったページも続けて訳すため。ホスト名だけ）。
 // 2. 文章を選んだら、選択範囲の近くに「訳」アイコンを出す（押すと選択範囲の訳を吹き出しで出す）。
-// manifest の content_scripts で入れる通常のスクリプトなので import できない。依頼の名前（'page-loaded'・'selection-icon'）と
+// manifest の content_scripts で入れる通常のスクリプトなので import できない。メッセージの名前（'page-loaded'・'selection-icon'）と
 // 選択の判定は shared/messages.js・shared/text.js の worthSelection と同じものを直接書いている。
 /** 拡張機能へ知らせる。拡張機能を再読み込みした後の古いタブでは接続が切れており、その場で例外になるので黙って止める。 */
 function tell(message) {
@@ -31,7 +31,7 @@ if (window.top === window) {
 
 // ---------------- 選択範囲の「訳」アイコン ----------------
 // Google 翻訳の拡張機能のように、文章を選び終えたら選択範囲の右下に小さなアイコンを浮かび上がらせる。
-// 押したときだけ選択した文を裏方へ送る（選んだだけでは送らない）。設定の「選択したときにアイコンを出す」で切り替える。
+// 押したときだけ選択した文をService Workerへ送る（選んだだけでは送らない）。設定の「選択したときにアイコンを出す」で切り替える。
 (() => {
   let enabled = true;
   try {

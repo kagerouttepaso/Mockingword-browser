@@ -21,7 +21,7 @@ export async function measureSession({ extension, caseInfo, visit, model, port, 
     await b.eval(b.ext, `chrome.storage.local.set(${JSON.stringify(config)})`);
     await b.eval(b.ext, `chrome.runtime.sendMessage({ type: 'status' })`);
     const sw = await b.waitFor(async () => (await b.targets()).find((target) => target.type === 'service_worker' && target.url.endsWith('/background/main.js')), 20000, 100);
-    if (!sw) throw new Error('拡張機能の裏方が起動しませんでした');
+    if (!sw) throw new Error('拡張機能のService Workerが起動しませんでした');
     const session = await b.attach(sw.targetId);
     if (!await b.waitFor(() => b.eval(session, '!!globalThis.__plamoHarness'), 10000, 100)) throw new Error('計測の実行口が起動しませんでした');
     const call = (method) => b.eval(session, `globalThis.__plamoHarness.${method}()`);
@@ -33,7 +33,7 @@ export async function measureSession({ extension, caseInfo, visit, model, port, 
     const off = await b.attach(target.targetId);
     const metadata = await b.eval(off, 'globalThis.__plamoProfile.metadata()');
     if (!(metadata.n_vocab > 0)) throw new Error('n_vocabを取得できませんでした');
-    await timing.phase('慣らし8まとまり', () => call('round'));
+    await timing.phase('ウォームアップ8バッチ', () => call('round'));
     await b.eval(off, 'globalThis.__plamoProfile.reset();globalThis.__plamoTokenCollector?.reset()');
     const rounds = [], analyses = [], tokenRounds = [];
     for (let index = 0; index < 3; ++index) {
@@ -55,7 +55,7 @@ export async function measureSession({ extension, caseInfo, visit, model, port, 
         json(path.join(output, prefix + '-quality-replays.json'), qualityReplays);
       }
     });
-    const quality = await timing.phase('目印つき文章', () => call('quality'));
+    const quality = await timing.phase('マーカーつき文章', () => call('quality'));
     result = { caseId: caseInfo.id, variant: caseInfo.id, artifact: caseInfo.resolved.artifact, artifactVariant: caseInfo.resolved.variant,
       visit, model, config, nativeLog: !!caseInfo.nativeLog, completionExtra: caseInfo.completionExtra, tokenMode: caseInfo.tokenMode, tokenRounds,
       prep, metadata, modelCache: b.modelCache.snapshot(), browser: await b.send('Browser.getVersion'), buildManifest: caseInfo.resolved.manifest,

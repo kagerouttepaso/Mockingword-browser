@@ -1,5 +1,5 @@
 // 文の判定と分割。DOM にも chrome にも触れない純粋な関数だけを置く（Node の単体試験 tools/unit.test.mjs で確かめる）。
-// 裏方（core/）・見えないページ（offscreen/）・ページ側（page/）から使う。
+// Service Worker（core/）・Offscreen Document（offscreen/）・ページ側（page/）から使う。
 
 import { MARK_TAG, labelsOf } from './markup.js';
 
@@ -40,13 +40,13 @@ const shortLatinLabel = (s) => !/[^\p{Script=Latin}\p{Script=Common}\p{Script=In
 
 /**
  * まとめ訳しの1行が訳されていないか。原文のままか、文字を含む原文に対して日本語の文字が1つもない。
- * 言語の混ざったまとまりでは、最初の言語の行だけ訳し、残りの行を原文のまま写すことがある
+ * 言語の混ざったバッチでは、最初の言語の行だけ訳し、残りの行を原文のまま写すことがある
  * （2026-11-09、0.8Bで韓国語・フランス語・ドイツ語の3行）。その行だけ1行ずつ訳し直すために見る。
  * 短い英字の行（3語以下かつ24字以下。製品名・モデル名・ボタン名）は、原文のまま返るのが正しいことが多いので訳し直さない
- * （GitHub Copilot の設定ページで、問い合わせが70回から53回に減った）。
- * バッジが並ぶだけの行（MDN の「Navigator.bluetooth」＋「Read only」「Secure context」。訳す文字がすべて入れ物の中）も、
+ * （GitHub Copilot の設定ページで、リクエストが70回から53回に減った）。
+ * バッジが並ぶだけの行（MDN の「Navigator.bluetooth」＋「Read only」「Secure context」。訳す文字がすべて要素の中）も、
  * 各バッジが短い英字のラベルなら同じく訳し直さない。日本語の文書でも Read only のままのほうが読みやすい（作者の判断、2026-11-16）。
- * 訳し直すと、まとめ訳しでモデルが英語のまま返すたびに1行ずつ送り直し、MDN の Navigator のページで問い合わせが 68→114 回に増えた。
+ * 訳し直すと、まとめ訳しでモデルが英語のまま返すたびに1行ずつ送り直し、MDN の Navigator のページでリクエストが 68→114 回に増えた。
  */
 export function untranslated(source, output) {
   const norm = (s) => normalize(s.replace(MARK_TAG, ''));
@@ -74,7 +74,7 @@ export function splitLong(text, max = 1200) {
 }
 
 /**
- * 段落の並びを、まとめて訳すまとまりに分ける（1まとまり maxLines 行・maxChars 字まで。Android の画面翻訳と同じ8行・400字）。
+ * 段落の並びを、まとめて訳すバッチに分ける（1バッチ maxLines 行・maxChars 字まで。Android の画面翻訳と同じ8行・400字）。
  * items は文字列か { text } の並び。並び順は保つ。
  */
 export function chunk(items, { maxLines = 8, maxChars = 400 } = {}) {
@@ -129,7 +129,7 @@ export function markLeads(kinds) {
   });
 }
 
-/** 短い項目か。リンク・コードの目印は字数から除き、文末のある短文は本文として扱う。 */
+/** 短い項目か。リンク・コードのマーカーは字数から除き、文末のある短文は本文として扱う。 */
 export function shortItem(text) {
   const plain = normalize(text.replace(MARK_TAG, ''));
   return plain.length <= 40 && !/[.!?。！？;；]$/.test(plain);
@@ -149,7 +149,7 @@ export function estimatedTokens(text) {
  * 次の組は従来と同じ優先順で選ぶ。同じグループの短い項目をそこへ集め、本文とは分ける。
  * 8行を目安にし、グループを完結できるときだけ12行まで許す。小さい同種のグループは丸ごと相乗りできる。
  * 大きいグループの片は単独の組にし、400字・入力256トークン見込みで切る。本文は従来の chunk の上限を保つ。
- * contextItemsには送信済み・控えの項目も渡せる。残りが1項目になっても本文へ混ぜず、大きいグループの最後の片も独立させる。
+ * contextItemsには送信済み・キャッシュの項目も渡せる。残りが1項目になっても本文へ混ぜず、大きいグループの最後の片も独立させる。
  * definitionsは長い説明も含め、unit（dt+ddの組）を分断しない。order（DOM順）で並べ、予算を超える1組は単独にする。
  */
 export function groupedChunk(items, { maxLines = 8, maxChars = 400, maxGroupLines = 12, maxTokens = 256, contextItems = items } = {}) {
@@ -184,7 +184,7 @@ export function groupedChunk(items, { maxLines = 8, maxChars = 400, maxGroupLine
     // 説明文を開くdetailsの要約1つは本文。ナビ・リストなどのラベルは1つ残った場合も本文に混ぜない。
     if (item.group.kind === 'disclosure' && (totals.get(group)?.length ?? group.length) < 2) itemGroups.delete(item);
   }
-  // 本文・同種の項目をそれぞれ詰め、組の先頭の優先順で送り出す。間に別の種類があっても小さい組を乱立させない。
+  // 本文・同種の項目をそれぞれ詰め、組の先頭の優先順で送信する。間に別の種類があっても小さい組を乱立させない。
   const planned = new Map();
   const register = (group) => { for (const item of group) planned.set(item, group); };
   for (const group of chunk(items.filter((item) => !itemGroups.has(item)), { maxLines, maxChars })) {
@@ -194,7 +194,7 @@ export function groupedChunk(items, { maxLines = 8, maxChars = 400, maxGroupLine
   for (const item of items) {
     const group = itemGroups.get(item);
     if (!group) continue;
-    // 定義の組も、本文のプロパティ説明とナビのリンク集は別の依頼にする。
+    // 定義の組も、本文のプロパティ説明とナビのリンク集は別のリクエストにする。
     const kind = item.group.kind === 'definitions' ? `definitions:${item.group.scope ?? 'body'}` : item.group.kind;
     if (!byKind.has(kind)) byKind.set(kind, new Set());
     byKind.get(kind).add(group);

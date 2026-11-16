@@ -1,19 +1,19 @@
 // 実際のページの翻訳を、同じ条件で何度も流して測り、区間ごとに分ける（docs/10 の N7）。保存したページ（MHTML）を本物の経路
-// （ページ側の段落集め・送り出し → 裏方 → offscreen）で訳すので、まとまりの入れ替わり、1行の step、ページ側の送り方（N8・N9）まで含めて測れる。
+// （ページ側の段落集め・送信 → Service Worker → offscreen）で訳すので、バッチの入れ替わり、1行の step、ページ側の送り方（N8・N9）まで含めて測れる。
 //
 // 実行：node tools/page-replay.mjs <MHTML のパス> [--rounds 3] [--parallel 8] [--model 0.8B] [--out 結果フォルダー]
 //         [--extension <extension フォルダー>]              … 基準の拡張を差し替える（既定はこのリポジトリの extension/）
 //         [--artifact <成果物ID>]                       … 基準の vendor/wllama を差し替える（計測版 profile を渡すと step まで取れる）
-//         [--compare <extension フォルダー>]            … ページ側・裏方の変更を候補として比べる
+//         [--compare <extension フォルダー>]            … ページ側・Service Workerの変更を候補として比べる
 //         [--compare-artifact <成果物ID>]               … wllama の変更を候補として比べる（拡張はこのリポジトリのまま）
-//       node tools/page-replay.mjs --save <URL> <保存先.mhtml>   … 公開ページを MHTML に保存する（題材づくり）
+//       node tools/page-replay.mjs --save <URL> <保存先.mhtml>   … 公開ページを MHTML に保存する（計測対象づくり）
 //
 // - 候補を渡すと、基準→候補を rounds 回交互に測る（順番の偏りを避ける）。
-// - 1回ごとにブラウザーを新しいプロファイルで起動し、モデルを読み込み、慣らしに同じページを1回訳してから、控えを消して本番を1回測る。
-// - 慣らしは同じページではなく「今の設定で測る」（tune の題材）で行う。測る本番はそのブラウザーで初めて訳すページになるので、
-//   prompt キャッシュは実際の使い方と同じ既定のまま（各スロットが前の依頼と共通する先頭だけを使い回す）。--no-prompt-cache で切れる。
-// - 調査用のログをオンにして、送信・受信・生成の時刻を集め、最初の行・画面内・送り出し・step に分ける（profile/replay-timeline.mjs）。
-// - MHTML は題材の保存物なのでリポジトリに入れない（CLAUDE.md「作者の保存物はリポジトリに入れない」）。
+// - 1回ごとにブラウザーを新しいプロファイルで起動し、モデルを読み込み、ウォームアップに同じページを1回訳してから、キャッシュを消して本番を1回測る。
+// - ウォームアップは同じページではなく「今の設定で測る」（tune の計測対象）で行う。測る本番はそのブラウザーで初めて訳すページになるので、
+//   prompt キャッシュは実際の使い方と同じ既定のまま（各スロットが前のリクエストと共通する先頭だけを使い回す）。--no-prompt-cache で切れる。
+// - 調査用のログをオンにして、送信・受信・生成の時刻を集め、最初の行・画面内・送信・step に分ける（profile/replay-timeline.mjs）。
+// - MHTML は計測対象の保存物なのでリポジトリに入れない（CLAUDE.md「作者の保存物はリポジトリに入れない」）。
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -32,7 +32,7 @@ const args = process.argv.slice(2);
 const opt = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
 const USAGE = '使い方：node tools/page-replay.mjs <MHTML> [--rounds 3] [--parallel 8] [--model 0.8B] [--out 結果フォルダー] [--artifact ID] [--compare <extension>] [--compare-artifact ID]\n       node tools/page-replay.mjs --save <URL> <保存先.mhtml>';
 
-// ---------------- 題材の保存 ----------------
+// ---------------- 計測対象の保存 ----------------
 if (args[0] === '--save') {
   const [, url, file] = args;
   if (!url || !file) { console.log(USAGE); process.exit(2); }
@@ -58,8 +58,8 @@ if (outDir) fs.mkdirSync(outDir, { recursive: true });
 const mhtml = readMhtml(target);
 
 /**
- * 拡張の一時コピーを作る。計測版の受け口（profile/offscreen-hook.js）を足す。
- * 成果物IDを渡すと vendor/wllama を差し替える（profile 版なら step の記録が受け口へたまる。通常版なら何もたまらない）。
+ * 拡張の一時コピーを作る。計測版のフック（profile/offscreen-hook.js）を足す。
+ * 成果物IDを渡すと vendor/wllama を差し替える（profile 版なら step の記録がフックへたまる。通常版なら何もたまらない）。
  */
 function prepare(source, artifact) {
   const ext = fs.mkdtempSync(path.join(os.tmpdir(), 'plamo-replay-'));
@@ -104,7 +104,7 @@ async function translatePage(b) {
   await b.send('Page.navigate', { url: mhtml.main }, session);
   await sleep(2500);
   const tabId = await tabIdOf(b, targetId);
-  // 訳文（訳し終わった行の先出しを含む）が最初に入った時刻を、ページの中で取る（エポックのミリ秒）。
+  // 訳文（訳し終わった行の途中表示を含む）が最初に入った時刻を、ページの中で取る（エポックのミリ秒）。
   await b.eval(session, `(() => {
     window.__replay = { first: null };
     new MutationObserver((recs) => {
@@ -126,7 +126,7 @@ async function translatePage(b) {
   })`);
   const screen = consoles.find((l) => l.text.includes('画面内の訳し終わり'));
   const num = (re, s) => (s?.match(re) ? Number(s.match(re)[1]) : null);
-  await sleep(300); // 最後の生成の記録が裏方へ届くのを待つ
+  await sleep(300); // 最後の生成の記録がService Workerへ届くのを待つ
   await b.send('Target.closeTarget', { targetId });
   return {
     t0, firstLine, consoles, pairs,
@@ -139,7 +139,7 @@ async function translatePage(b) {
   };
 }
 
-/** 新しいプロファイルで起動し、慣らしの1回のあと、控えとログを消して1回測る。 */
+/** 新しいプロファイルで起動し、ウォームアップの1回のあと、キャッシュとログを消して1回測る。 */
 async function measure(variant) {
   const b = await launch({ extension: variant.dir });
   try {
@@ -149,7 +149,7 @@ async function measure(variant) {
     await message(b, { type: 'translate-one', text: 'Warm up the model.' });
     const status = await message(b, { type: 'status' });
     const off = await b.attach((await b.waitFor(async () => (await b.targets()).find((t) => t.url.endsWith('/offscreen/offscreen.html')), 20000, 100)).targetId);
-    await message(b, { type: 'speed-test' }); // 慣らし（シェーダーの準備など、最初の1回だけ遅い分を除く）。同じページは訳さない
+    await message(b, { type: 'speed-test' }); // ウォームアップ（シェーダーの準備など、最初の1回だけ遅い分を除く）。同じページは訳さない
     await message(b, { type: 'cache-clear' });
     await message(b, { type: 'logs-clear' });
     await b.eval(off, 'globalThis.__plamoProfile.reset()');
@@ -165,7 +165,7 @@ async function measure(variant) {
 const median = (a) => { const s = a.filter((x) => x !== null && x !== undefined).sort((x, y) => x - y); return s.length ? s[s.length >> 1] : null; };
 const fmt = (ms) => (ms === null || ms === undefined ? '—' : (ms / 1000).toFixed(2) + '秒');
 const results = Object.fromEntries(variants.map((v) => [v.name, []]));
-console.log(`題材：${path.basename(target)}（${mhtml.main}）、${model}、同時${parallel}本、${rounds}回`);
+console.log(`計測対象：${path.basename(target)}（${mhtml.main}）、${model}、同時${parallel}本、${rounds}回`);
 for (const v of variants) console.log(`  ${v.name}：wllama ${v.artifact}${v.variant === 'profile' || v.variant === 'profile-gpu' ? '（計測版。時間は計測の上乗せを含む）' : ''}`);
 for (let i = 0; i < rounds; i++) {
   for (const v of variants) {
@@ -175,7 +175,7 @@ for (let i = 0; i < rounds; i++) {
     console.log(`${i + 1}回目 ${v.name}：全体 ${fmt(r.totalMs)}・画面内 ${fmt(r.screenMs)}・最初の行 ${fmt(r.firstMs)}・${r.paragraphs}段落・問い合わせ${r.requests}回・${r.tps} tok/s（${m.device}、${m.loadedParallel}本、${m.adapter ?? ''}）`);
     console.log(formatReplay(m.analysis));
     const q = m.quality;
-    console.log(`  訳の崩れ：行がずれた依頼 ${q.fallbackRequests}/${q.requests}・打ち切り ${q.cutGenerations}・目印 ${q.brokenMarks}・英字のまま ${q.untranslated}・空 ${q.empty}（${q.paragraphs}段落）`);
+    console.log(`  訳の崩れ：行がずれた依頼 ${q.fallbackRequests}/${q.requests}・打ち切り ${q.cutGenerations}・マーカー ${q.brokenMarks}・英字のまま ${q.untranslated}・空 ${q.empty}（${q.paragraphs}段落）`);
     if (outDir) fs.writeFileSync(path.join(outDir, `${v.name === '基準' ? 'reference' : 'candidate'}-${i + 1}.json`), JSON.stringify({ variant: v.name, artifact: v.artifact, ...m }, null, 1));
   }
 }

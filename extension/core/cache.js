@@ -1,12 +1,12 @@
-// 訳の控え。同じ文を何度も訳さないために、メモリー（速い）と IndexedDB（裏方が止まっても、ブラウザーを閉じても残る）の2段で持つ。
-// 裏方（service worker）は数十秒使わないと止まり、メモリーの控えはそのたびに消えるので、IndexedDB に残す。
-// 鍵は「モデル|原文の言語|文体|原文」。IndexedDB は最大 DB_LIMIT 件で、超えたら古く使ったものから消す。設計は docs/03_翻訳コア.md「訳の控え」。
+// 訳文のキャッシュ。同じ文を何度も訳さないために、メモリー（速い）と IndexedDB（Service Workerが止まっても、ブラウザーを閉じても残る）の2段で持つ。
+// Service Workerは数十秒使わないと止まり、メモリーのキャッシュはそのたびに消えるので、IndexedDB に残す。
+// 鍵は「モデル|原文の言語|文体|原文」。IndexedDB は最大 DB_LIMIT 件で、超えたら古く使ったものから消す。設計は docs/03_翻訳コア.md「訳文のキャッシュ」。
 
 const MEMORY_LIMIT = 3000;
 const DB_LIMIT = 20000;
 const memory = new Map();
 
-/** 控えの鍵。 */
+/** キャッシュの鍵。 */
 export function cacheKey(text, options) {
   return `${options.model}|${options.source ?? 'auto'}|${options.form}|${text}`;
 }
@@ -27,7 +27,7 @@ function openDb() {
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   }).catch((e) => {
-    console.warn('[Mockingword] 訳の控え（IndexedDB）を開けません', e);
+    console.warn('[Mockingword] 訳文のキャッシュ（IndexedDB）を開けません', e);
     dbPromise = null;
     return null;
   });
@@ -90,7 +90,7 @@ function prune(db) {
 
 // ---------------- 外から使う関数 ----------------
 
-/** 訳を控える。 */
+/** 訳をキャッシュに入れる。 */
 export function remember(key, value) {
   rememberMemory(key, value);
   toWrite.set(key, value);
@@ -115,7 +115,7 @@ export async function lookup(keys) {
 }
 
 /**
- * 控えの件数と大きさ（設定画面に出す）。大きさは鍵と訳文の字数から見積もる（JavaScript の文字列は1字2バイト）。
+ * キャッシュの件数と大きさ（設定画面に出す）。大きさは鍵と訳文の字数から見積もる（JavaScript の文字列は1字2バイト）。
  * 合わせて、拡張機能がブラウザーの中で使っている量の合計（モデルを含む）を navigator.storage.estimate で返す。
  */
 export async function stats() {
@@ -140,7 +140,7 @@ export async function stats() {
   return { count, bytes, limit: DB_LIMIT, usage: estimate?.usage ?? null };
 }
 
-/** 控えをすべて消す（設定画面の「控えを消す」）。 */
+/** キャッシュをすべて消す（設定画面の「キャッシュを消す」）。 */
 export async function clear() {
   memory.clear();
   toWrite.clear();

@@ -1,5 +1,5 @@
 // ツールバーのボタンを押したときのメニュー。ページの翻訳・表示の切り替え・テキスト翻訳・モデルの切り替えと解放・設定。
-// ページへの差し込みは裏方が行う（メニューを開いたタブには activeTab の権限が付く）。
+// ページへの差し込みはService Workerが行う（メニューを開いたタブには activeTab の権限が付く）。
 import { DEFAULTS, MODEL_LABELS, describeStatus } from '../shared/settings.js';
 import { MSG } from '../shared/messages.js';
 

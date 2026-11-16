@@ -1,6 +1,6 @@
 # wllama（同梱）
 
-ブラウザーの中で llama.cpp を動かすライブラリ。拡張機能の見えないページ（`offscreen/offscreen.html`）が使う。固定版へ性能改善パッチを重ねた自前ビルド（通常版）を同梱している。
+ブラウザーの中で llama.cpp を動かすライブラリ。拡張機能のOffscreen Document（`offscreen/offscreen.html`）が使う。固定版へ性能改善パッチを重ねた自前ビルド（通常版）を同梱している。
 
 ## 現在のファイルと差し替え状態
 
@@ -51,7 +51,7 @@ node tools/wllama/build.mjs --variant baseline --patches tools/wllama/patches/co
 | matmul-h8 | `0002-share-weights-across-eight-columns.patch`、`0003-limit-wide-mmvq-workgroup.patch` | 8列で重みを共有し、広い MMVQ の workgroup を調整。2パッチを一緒に採用 |
 | attn | `0001-skip-masked-prefill-tiles.patch` | 原文読み込み時の attention で、全行が mask されたタイルを読み込み前に飛ばす |
 | prefill-m8 | `0001-widen-kquant-thread-tile.patch` | 原文読み込み時の Q4_K/Q6_K の行列積で、1スレッドの受け持ちを 4×8 から 8×8 へ広げる（共有メモリー16KB、GPU名では分けない） |
-| sampling-stable | `0001-keep-token-only-slot-samplers.patch` | 温度0の翻訳の sampler を全スロットへ最初に付けて保持し、まとまりの開始・終了ごとの計算グラフの取り直し（reserve）をなくす（N1） |
+| sampling-stable | `0001-keep-token-only-slot-samplers.patch` | 温度0の翻訳の sampler を全スロットへ最初に付けて保持し、バッチの開始・終了ごとの計算グラフの取り直し（reserve）をなくす（N1） |
 
 H6 の `samplers: ["temperature"]` は offscreen の要求設定として採用する。`attn`（H5）は修正・再計測後の採用版を含む。`cpu`・`cache`・計測用 `profile` もこの採用一覧には含めず、採否は各実験で確定する。
 
@@ -67,4 +67,4 @@ wllama・llama.cpp、および参照・移植した sakutto の部分は MIT Lic
 
 更新時は固定入力・順序付きパッチ一覧から通常版を作り、同じ build manifest の `index.js` と `wasm/wllama.wasm` を一緒に差し替える。profile・profile-gpu の計測版を同梱しない。manifest の成果物 hash と実ファイルを照合し、この README と `docs/00_現在地.md` を更新して、通しの試験を変更の区切りの最後に1回行う。
 
-PLaMo Community Licenseの同梱の写しは、公式pfnet/plamo-3-translate-0.8bのcommit `8b4d42855622093e610ba9b90c2d2b59f8d5c15d` のLICENSE/ja・LICENSE/enから取得（2026-11-15）。
+PLaMo Community Licenseの同梱のコピーは、公式pfnet/plamo-3-translate-0.8bのcommit `8b4d42855622093e610ba9b90c2d2b59f8d5c15d` のLICENSE/ja・LICENSE/enから取得（2026-11-15）。

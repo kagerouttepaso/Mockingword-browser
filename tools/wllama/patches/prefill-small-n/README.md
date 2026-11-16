@@ -18,7 +18,7 @@
 - 代表のn3がcacheにあれば、同じ系列の全種類がそろったと見なして先行作成を省いていた。最初の短い原文でn3だけを作った場合、その後に大きいNを扱ってもn6・n7は準備されない。前版の検証は空のcacheから大きいNを入れる順序だけを確かめていた。
 - `CreateComputePipeline` はhandleを返す同期APIで、デバイス側の準備完了を待たない。先行作成のループが実行されても、初回使用時にコンパイル待ちが残りうる。
 
-固定版のnative慣らしはBOS/EOSの1〜2トークンで、短いN用pipelineをそろえる工程はない。前版の「モデル慣らしの大きいNで準備される」という想定も修正する。第2版はbackendの生成時に準備し、native慣らしやspeed-testでどの形を通るかに依存しない。
+固定版のnativeウォームアップはBOS/EOSの1〜2トークンで、短いN用pipelineをそろえる工程はない。前版の「モデルウォームアップの大きいNで準備される」という想定も修正する。第2版はbackendの生成時に準備し、nativeウォームアップやspeed-testでどの形を通るかに依存しない。
 
 固定版Emdawnの `library_webgpu.js` では、`CreateComputePipelineAsync` はブラウザーの `device.createComputePipelineAsync()` へ渡される。返されたPromiseが完了するとpipelineは追加の待ちなく使用可能となる。[WebGPU仕様のpipeline作成](https://www.w3.org/TR/webgpu/#pipeline-creation)も、同期APIでは初回submitまでのどこかで停止しうることを定めている。
 
@@ -31,7 +31,7 @@ Nが4の倍数かどうかによる `vectorized` の違いは、このケース�
 | n8、Q4_K/Q6_K、m4 | 55 / 62 | 124 / 100 / 107ms |
 | n3、Q4_K/Q6_K、m4/m8 | 14 / 21 | 75 / 57 / 62ms |
 
-`WORK/replays/perf-gpu/candidate-1.json` を `analyzeEvents(d.events).steps` で再集計した。ページの前には、同じモデルを保持したまま短い `translate-one` とspeed-testが実行され、計測ログはその後にresetされる。表の「初めて」はページ計測内での初出である。n3・n8_m4は慣らしで使用済みか、使用までに非同期の準備が終わっていた説明と整合する。両者の判別にはreset前のpipeline使用・作成時刻が要る。第2版は、どの順番でも全対象pipelineの完了を読み込み時に待つ。
+`WORK/replays/perf-gpu/candidate-1.json` を `analyzeEvents(d.events).steps` で再集計した。ページの前には、同じモデルを保持したまま短い `translate-one` とspeed-testが実行され、計測ログはその後にresetされる。表の「初めて」はページ計測内での初出である。n3・n8_m4はウォームアップで使用済みか、使用までに非同期の準備が終わっていた説明と整合する。両者の判別にはreset前のpipeline使用・作成時刻が要る。第2版は、どの順番でも全対象pipelineの完了を読み込み時に待つ。
 
 ## 第2版の実装と契約
 
@@ -89,6 +89,6 @@ IDは計画と適用を確認した段階の値である。N1単独は既存の 
 
 1. 読み込み直後の最初のページで、n3〜n8の初出に約0.65〜0.7秒の停止が出ないことを確認する。n6・n7だけでなく、n4・n5と端数Nも対象にする。形ごとのstep時間をGPU時間と対応させる。
 2. モデル解放後、最初の `translate-one` のモデル側ログ `loadMs` を基準と比べる。`page-replay.mjs` はspeed-testより前にモデルを読み込むため、speed-test側の `loadMs` は追加の準備費用を含まない。ページ計測前のログをresetする前に読み込み時間を取る。
-3. 通常版をN1単独と交互3回で比べる。全体・画面内・最初の行、訳文・token数・目印・停止位置を確認する。N1のグラフ構築削減と定常decodeが保たれることも見る。
+3. 通常版をN1単独と交互3回で比べる。全体・画面内・最初の行、訳文・token数・マーカー・停止位置を確認する。N1のグラフ構築削減と定常decodeが保たれることも見る。
 
 今回のログには、合計N=313のstepにも約182msのqueue待ちがある。n6・n7のmap待ちとは別の待ちで、今回の修正による解消は未確定である。新しいpipelineの初出停止が消えた後もこの待ちが残る場合は、独立して原因を確認する。

@@ -1,9 +1,9 @@
-// 拡張機能の見えないページ（offscreen document）。ブラウザーの中で PLaMo を動かす（wllama＝llama.cpp の WASM 版）。
-// 裏方（core/engine.js）から { target: 'offscreen' } の依頼を受けて訳す。モデルは一度読み込んだら、このページが閉じるまで保持する。
-// メモリーを空けるときは、裏方がこのページごと閉じる（未使用が続いたとき・「モデルを解放」）。設計は docs/03_翻訳コア.md。
+// 拡張機能のOffscreen Document。ブラウザーの中で PLaMo を動かす（wllama＝llama.cpp の WASM 版）。
+// Service Worker（core/engine.js）から { target: 'offscreen' } のリクエストを受けて訳す。モデルは一度読み込んだら、このページが閉じるまで保持する。
+// メモリーを空けるときは、Service Workerがこのページごと閉じる（未使用が続いたとき・「モデルを解放」）。設計は docs/03_翻訳コア.md。
 import { Wllama } from '../vendor/wllama/index.js';
 import { runaway } from '../shared/text.js';
-import { MSG, OFFSCREEN } from '../shared/messages.js';
+import { LOG_SOURCE, MSG, OFFSCREEN } from '../shared/messages.js';
 import { LOCAL_DEFAULTS } from '../shared/settings.js';
 
 /**
@@ -51,7 +51,7 @@ function threadsFor(requested) {
 }
 
 /**
- * slots：同時に計算できる本数（ページの同時送信数＋1。1本を選択範囲・テキスト翻訳に空ける）。
+ * slots：同時に計算できる同時実行数（ページの同時送信数＋1。1本を選択範囲・テキスト翻訳に空ける）。
  * ubatch：原文の読み込みで GPU へ一度に渡すトークン数。n_batch はそれ以上にする必要がある。
  */
 async function load(name, device, threads, slots, ubatch) {
@@ -64,7 +64,7 @@ async function load(name, device, threads, slots, ubatch) {
       return true;
     });
   } catch (e) {
-    // 読み込みに失敗した分の GPU メモリーを空けてから、呼び出し元が本数を下げて試し直す。
+    // 読み込みに失敗した分の GPU メモリーを空けてから、呼び出し元が同時実行数を下げて試し直す。
     await wllama.exit().catch(() => {});
     throw e;
   }
@@ -80,9 +80,9 @@ async function loadInto(wllama, name, device, threads, slots, ubatch, due) {
     n_batch: Math.max(2048, ubatch),
     n_ubatch: ubatch,
     n_parallel: slots,
-    // PLaMo 3 の SWA（窓2048）の層の KV を、窓の大きさに切り詰めず全長で持つ。見える範囲は変わらない（1回の問い合わせは窓に収まる）が、
+    // PLaMo 3 の SWA（窓2048）の層の KV を、窓の大きさに切り詰めず全長で持つ。見える範囲は変わらない（1回のリクエストは窓に収まる）が、
     // 原文の読み込みが速くなる。sakutto（同じ PLaMo＋wllama の拡張機能）の知見で、この検証環境A（RTX 4060）でも
-    // 8まとまりが2.65→2.35秒、最初の1まとまりが1.07→0.94秒になった（2026-11-09、2巡とも同じ傾向）。
+    // 8バッチが2.65→2.35秒、最初の1バッチが1.07→0.94秒になった（2026-11-09、2巡とも同じ傾向）。
     swa_full: true,
     progressCallback: ({ loaded, total }) => {
       if (!due(Date.now()) && loaded < total) return;
@@ -91,14 +91,14 @@ async function loadInto(wllama, name, device, threads, slots, ubatch, due) {
   });
 }
 
-/** GPU で試す本数の順。指定の本数から4本・1本へ下げる（指定より多くはしない）。 */
+/** GPU で試す同時実行数の順。指定の同時実行数から4本・1本へ下げる（指定より多くはしない）。 */
 function degradeSteps(parallel) {
   return [...new Set([parallel, 4, 1])].filter((n) => n <= parallel);
 }
 
 /**
- * 同時に計算させる問い合わせを、読み込めたスロット数までに抑える。
- * ページは設定の本数で送ってくるので、本数を下げて読み込んだときは、あふれた問い合わせをここで順番に待たせる。
+ * 同時に計算させるリクエストを、読み込めたスロット数までに抑える。
+ * ページは設定の同時実行数で送ってくるので、同時実行数を下げて読み込んだときは、あふれたリクエストをここで順番に待たせる。
  */
 async function acquire(entry) {
   entry.active ??= 0;
@@ -129,7 +129,7 @@ async function ensure({ model, device = LOCAL_DEFAULTS.device, threads = LOCAL_D
     entry.threads = threadsFor(threads);
     let error = null;
     if (useGpu) {
-      // GPU で読み込めないとき（内蔵GPUのメモリー不足など）は、すぐ CPU へ落とさず本数を下げて試す。
+      // GPU で読み込めないとき（内蔵GPUのメモリー不足など）は、すぐ CPU へ落とさず同時実行数を下げて試す。
       // GPU の4本・1本でも CPU より約2〜7倍速い（docs/03「動作モード」）。sakutto の段階的な降格と同じ考え方（docs/09 S4）。
       for (const n of degradeSteps(parallel)) {
         try {
@@ -154,7 +154,7 @@ async function ensure({ model, device = LOCAL_DEFAULTS.device, threads = LOCAL_D
     }
   })();
   entry.ready.catch(() => {
-    if (current === entry) current = null; // 失敗したら次の依頼で読み込み直す
+    if (current === entry) current = null; // 失敗したら次のリクエストで読み込み直す
   });
   await entry.ready;
   return entry;
@@ -172,19 +172,19 @@ async function status() {
     device: current.device,
     threads: current.device === 'cpu' ? (current.wllama.isMultithread() ? current.threads : 1) : null,
     adapter: current.adapter,
-    parallel: current.slots - 1, // GPU で本数を下げて読み込んだときは、実際に読み込めた本数
+    parallel: current.slots - 1, // GPU で同時実行数を下げて読み込んだときは、実際に読み込めた同時実行数
     ubatch: current.ubatch,
   };
 }
 
 // ---------------- 生成 ----------------
 
-/** 生成中の問い合わせ。番号 → 中止の仕掛け。裏方からの取り消しで止める。 */
+/** 生成中のリクエスト。番号 → 中止の仕掛け。Service Workerからの取り消しで止める。 */
 const running = new Map();
 
-/** 調査用のログを裏方へ送る（設定の「調査用のログ」がオンのときだけ）。 */
+/** 調査用のログをService Workerへ送る（設定の「調査用のログ」がオンのときだけ）。 */
 function trace(message, event, data) {
-  if (message.debugLog) chrome.runtime.sendMessage({ type: MSG.LOG, source: 'model', event, data }).catch(() => {});
+  if (message.debugLog) chrome.runtime.sendMessage({ type: MSG.LOG, source: LOG_SOURCE.model, event, data }).catch(() => {});
 }
 
 /**
@@ -204,7 +204,7 @@ async function complete(message) {
   let keep = 0;
   let usage = null;
   let first = 0;
-  // まとめ訳しの途中経過。行が増えたときだけ、0.25秒おきまでに知らせる（裏方が訳し終わった行をページへ渡す）。
+  // まとめ訳しの途中経過。行が増えたときだけ、0.25秒おきまでに知らせる（Service Workerが訳し終わった行をページへ渡す）。
   // stream（テキスト翻訳）は行の区切りを待たず0.1秒おきに、生成したトークン数（受け取った回数）も添えて知らせる。
   let lastPartial = 0;
   let sentLines = 0;
@@ -217,7 +217,7 @@ async function complete(message) {
     lastPartial = now;
     chrome.runtime.sendMessage({ type: MSG.PARTIAL, requestId: message.requestId, text, tokens: pieces }).catch(() => {});
   };
-  // 本数を下げて読み込んだときは、ここで空きを待つ。待つ間に取り消されたら生成しない。
+  // 同時実行数を下げて読み込んだときは、ここで空きを待つ。待つ間に取り消されたら生成しない。
   const release = await acquire(entry);
   const acquired = performance.now();
   try {
@@ -227,8 +227,8 @@ async function complete(message) {
       backend_sampling: true,
       backend_sampling_token_only: true,
       samplers: ['temperature'],
-      // 速さの調整は同じ文章を繰り返し訳すので、控え（読み込み済みの原文）を使うと原文の読み込みが省かれ、実際のページより速く出る。
-      // 調整のときだけ切る。ページの翻訳は毎回違う文なので、既定（控えあり）のまま。
+      // 速さの調整は同じ文章を繰り返し訳すので、キャッシュ（読み込み済みの原文）を使うと原文の読み込みが省かれ、実際のページより速く出る。
+      // 調整のときだけ切る。ページの翻訳は毎回違う文なので、既定（キャッシュあり）のまま。
       ...(message.noCache ? { cache_prompt: false } : {}),
       prompt: message.prompt,
       max_tokens: message.maxTokens,
@@ -254,8 +254,8 @@ async function complete(message) {
   }
   const data = {
     requestId: message.requestId,
-    // 読み込み待ち・最初の1字までの待ち（ほかの問い合わせの順番待ちを含む）・生成の時間（ミリ秒）
-    // 時間軸に並べるための開始時刻（エポックからのミリ秒）と、本数を下げて読み込んだときの空き待ち
+    // 読み込み待ち・最初の1字までの待ち（ほかのリクエストの順番待ちを含む）・生成の時間（ミリ秒）
+    // 時間軸に並べるための開始時刻（エポックからのミリ秒）と、同時実行数を下げて読み込んだときの空き待ち
     startAt: Math.round(performance.timeOrigin + t0),
     waitMs: Math.round(acquired - loaded),
     promptTokens: usage?.prompt_tokens,
@@ -278,10 +278,10 @@ async function complete(message) {
   return { ok: true, text: text.trim(), cut: !!keep, tokens: data.tokens ?? null, genMs: data.genMs, loadMs: data.loadMs };
 }
 
-// ---------------- 裏方からの依頼 ----------------
+// ---------------- Service Workerからのリクエスト ----------------
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  // ページ側から裏方への依頼もここに届くので、自分宛て以外は返事をしない。
+  // ページ側からService Workerへのリクエストもここに届くので、自分宛て以外は返事をしない。
   if (message?.target !== OFFSCREEN) return false;
   const handle = async () => {
     switch (message.type) {

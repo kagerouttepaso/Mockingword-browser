@@ -1,4 +1,4 @@
-// 何をどうまとめて訳すかを決める。控え（core/cache.js）を先に引き、残りをモデル（core/engine.js）へ送る。
+// 何をどうまとめて訳すかを決める。キャッシュ（core/cache.js）を先に引き、残りをモデル（core/engine.js）へ送る。
 // 手本は Androidアプリの BatchTranslator.kt。設計は docs/03_翻訳コア.md「まとめ訳し」。
 
 import { cacheKey, lookup, remember } from './cache.js';
@@ -9,20 +9,20 @@ import { chunk, splitLong, untranslated } from '../shared/text.js';
 const LONG_TEXT = 1200;
 
 /**
- * まとめ訳しの途中経過の対応。問い合わせの番号 → まとまりの何行目を訳しているか（控えにあった行は送らないので、ずれる）。
- * 裏方が、見えないページから届いた途中経過の行を、ページのまとまりの行へ戻すときに使う。
+ * まとめ訳しの途中経過の対応。リクエストの番号 → バッチの何行目を訳しているか（キャッシュにあった行は送らないので、ずれる）。
+ * Service Workerが、Offscreen Documentから届いた途中経過の行を、ページのバッチの行へ戻すときに使う。
  */
 export const partialLines = new Map();
 
-/** 原文の並びのうち、控えにある訳を返す（無いものは null）。ページが訳し始める前に、控えの分をまとめて置き換えるため。 */
+/** 原文の並びのうち、キャッシュにある訳を返す（無いものは null）。ページが訳し始める前に、キャッシュの分をまとめて置き換えるため。 */
 export async function lookupCached(texts, options) {
   return (await lookup(texts.map((t) => cacheKey(t, options)))).map((v) => v ?? null);
 }
 
 /**
  * 1つの文章を訳す。長ければ文の切れ目で分けて訳し、つなげて返す。stats を渡すと、生成したトークン数を足す。
- * 片は同時に送る。モデルは本数分を同時に計算できるので、n 片が約 n 倍ではなく約1片ぶんの時間で済む
- * （sakutto の長い段落の片を空いた本数へ散らす工夫。docs/09 S3）。あふれた片は見えないページが順番に待たせる。
+ * 片は同時に送る。モデルは同時実行数分を同時に計算できるので、n 片が約 n 倍ではなく約1片ぶんの時間で済む
+ * （sakutto の長い段落の片を空いた同時実行数へ散らす工夫。docs/09 S3）。あふれた片はOffscreen Documentが順番に待たせる。
  */
 export async function translateText(text, options, stats = null) {
   const key = cacheKey(text, options);
@@ -49,11 +49,11 @@ export async function translateText(text, options, stats = null) {
 /**
  * 数行（1行＝1段落）をまとめて1回で訳し、訳文を改行で分けて行ごとに返す。
  * PLaMo は改行を保ったまま訳すので、1回あたりの固定費（プロンプト処理）をまとめて払える。
- * 行数が合わない・生成を打ち切ったときはまとまりを1行ずつ、訳されていない行（shared/text.js の untranslated）はその行だけ訳し直す。
+ * 行数が合わない・生成を打ち切ったときはバッチを1行ずつ、訳されていない行（shared/text.js の untranslated）はその行だけ訳し直す。
  */
 export async function translateBatch(texts, options) {
   const results = new Array(texts.length);
-  // tokens：モデルが生成したトークン数（控えから返した分は0）。loadMs：モデルの読み込みを待った時間の最長。
+  // tokens：モデルが生成したトークン数（キャッシュから返した分は0）。loadMs：モデルの読み込みを待った時間の最長。
   // ページのバーが速さ（トークン/秒）を出すのに使う。
   const stats = { requests: 0, fallback: false, tokens: 0, loadMs: 0 };
   const hits = await lookup(texts.map((t) => cacheKey(t, options)));
@@ -95,7 +95,7 @@ export async function translateBatch(texts, options) {
       remember(cacheKey(texts[i], options), lines[k]);
     });
   } else {
-    stats.fallback = true; // 行がずれた・打ち切ったら、このまとまりは1つずつ訳し直す
+    stats.fallback = true; // 行がずれた・打ち切ったら、このバッチは1つずつ訳し直す
     redo.push(...pending);
   }
   for (const i of redo) await one(i);
@@ -104,8 +104,8 @@ export async function translateBatch(texts, options) {
 
 /**
  * 複数行の文章（テキスト翻訳）を訳す。行ごとに分け、ページの翻訳と同じく8行・400字までまとめて訳す。
- * 1つの問い合わせに言語を混ぜると2言語目以降の行を原文のまま返すことがあるため、まとめ訳しの行ごとの点検を通す。
- * まとまりは同時に送り（モデルは5本まで同時に計算できる）、空行は保つ。
+ * 1つのリクエストに言語を混ぜると2言語目以降の行を原文のまま返すことがあるため、まとめ訳しの行ごとの点検を通す。
+ * バッチは同時に送り（モデルは5本まで同時に計算できる）、空行は保つ。
  */
 export async function translateLines(text, options) {
   const lines = text.split(/\r?\n/);

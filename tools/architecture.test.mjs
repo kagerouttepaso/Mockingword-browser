@@ -44,8 +44,8 @@ test('純粋なモジュールは DOM・chrome に触れない', () => {
   assert.deepEqual(bad, []);
 });
 
-test('目印の文法は shared/markup.js だけに書く（作る側・読む側・判定がそれぞれ別の形を持たない）', () => {
-  // 目印を作る・読む書き方：`<a${`、`<c1>` のような目印の文字、[ac]・[acv] の文字クラス。
+test('マーカーの文法は shared/markup.js だけに書く（作る側・読む側・判定がそれぞれ別の形を持たない）', () => {
+  // マーカーを作る・読む書き方：`<a${`、`<c1>` のようなマーカーの文字、[ac]・[acv] の文字クラス。
   const grammar = /<\/?[acv]\$\{|\[a?cv?\]\\d|<\\?\/?[acv]\(?\\d/;
   const bad = sources.filter((rel) => rel !== 'shared/markup.js' && grammar.test(code(rel)));
   assert.deepEqual(bad, []);
@@ -57,4 +57,31 @@ test('段落の中の要素の分類は page/paragraph.js の roleOf だけで�
   // 訳文表示で隠す要素は paragraph.js が決め（hide）、write.js が印を付ける。ほかの場所で印を付けない。
   const setters = sources.filter((rel) => /setAttribute\(['"]data-plamo-hide/.test(code(rel)));
   assert.deepEqual(setters, ['page/write.js']);
+});
+
+test('独自の呼び名を使わない（docs/11_設計方針.md「使わない言い換え」の表の語が、文書・コード・画面に無い）', () => {
+  const repo = path.resolve(ROOT, '..');
+  const policy = fs.readFileSync(path.join(repo, 'docs/11_設計方針.md'), 'utf8');
+  const table = policy.split('### 使わない言い換え')[1].split(/\n#/)[0];
+  const banned = [...table.matchAll(/^\| ([^|]+?) \| [^|]+ \|$/gm)].map((m) => m[1]).filter((w) => w !== '使わない語' && !/^-+$/.test(w));
+  assert.ok(banned.length >= 10, '表を読めていない');
+  // 調べる範囲：リポジトリの文書・拡張機能・ツール。同梱の外部ライブラリ、生成物、Git の外のメモ、この表そのものは除く。
+  const SKIP = new Set(['.git', 'node_modules', 'dist', 'local-notes', 'vendor']);
+  const files = [];
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (SKIP.has(e.name)) continue;
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/\.(md|js|mjs|html|css|json|py)$/.test(e.name)) files.push(p);
+    }
+  };
+  walk(repo);
+  const bad = [];
+  for (const file of files) {
+    if (path.relative(repo, file) === path.join('docs', '11_設計方針.md')) continue;
+    const text = fs.readFileSync(file, 'utf8');
+    for (const word of banned) if (text.includes(word)) bad.push(`${path.relative(repo, file)}：${word}`);
+  }
+  assert.deepEqual(bad, []);
 });

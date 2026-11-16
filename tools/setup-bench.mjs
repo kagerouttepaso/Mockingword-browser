@@ -200,7 +200,7 @@ export async function setupBench(argv = process.argv.slice(2), { env = process.e
         result.check = { skipped: false, exitCode: measured.code, summary };
         result.status = measured.code === 2 ? 'review-required' : 'checked';
         log(`確認計測のsummary.md: ${summary}`);
-        if (measured.code === 2) log('計測は完了しました。訳文・目印などの照合に要確認の差があるため、summary.mdとreport.jsonを統率者へ渡してください（終了コード2）。');
+        if (measured.code === 2) log('計測は完了しました。訳文・マーカーなどの照合に要確認の差があるため、summary.mdとreport.jsonを統率者へ渡してください（終了コード2）。');
       } catch (error) {
         result.status = 'failed'; result.check = { skipped: false, error: error.message };
         throw new Error(`確認計測: ${error.message}\n対処: WORK/profilesのreport.jsonとbrowser.jsonlを確認してください。CDPポート競合なら --port 9351 で再実行してください。`, { cause: error });

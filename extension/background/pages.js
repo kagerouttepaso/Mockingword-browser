@@ -6,7 +6,7 @@ import { settings } from './config.js';
 
 /**
  * ページへ部品を差し込む。page/loader.js がページ側のモジュール（page/main.js）を読み込み、読み込み終わるまで待つ
- * （差し込んだ直後に送る依頼を取りこぼさないため）。二重に差し込んでも、ページ側で1回だけ読み込む。
+ * （差し込んだ直後に送るメッセージを取りこぼさないため）。二重に差し込んでも、ページ側で1回だけ読み込む。
  */
 export async function inject(tabId, frameId) {
   const target = frameId ? { tabId, frameIds: [frameId] } : { tabId };
@@ -14,7 +14,7 @@ export async function inject(tabId, frameId) {
   await chrome.scripting.executeScript({ target, files: ['page/loader.js'] });
 }
 
-/** 差し込んでから依頼を送る。 */
+/** 差し込んでからメッセージを送る。 */
 export async function sendToPage(tabId, message, frameId = 0) {
   await inject(tabId, frameId);
   return chrome.tabs.sendMessage(tabId, message, { frameId });

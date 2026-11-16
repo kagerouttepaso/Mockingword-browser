@@ -38,7 +38,7 @@ async function translate() {
   }
   foot.textContent = '翻訳中…';
   const t0 = performance.now();
-  // stream：裏方が訳文の途中と生成したトークン数を0.1秒おきに知らせてくる（下の onMessage）。ほかのテキスト翻訳のタブと混ざらない番号にする。
+  // stream：Service Workerが訳文の途中と生成したトークン数を0.1秒おきに知らせてくる（下の onMessage）。ほかのテキスト翻訳のタブと混ざらない番号にする。
   stream = `${Date.now()}-${mine}`;
   const r = await chrome.runtime.sendMessage({ type: MSG.TRANSLATE_ONE, text, source: source.value, lines: true, stream }).catch((e) => ({ ok: false, error: e.message }));
   if (mine !== generation) return;
@@ -104,7 +104,7 @@ $('copy').onclick = async () => {
 };
 $('options').onclick = () => chrome.runtime.openOptionsPage();
 
-// 初回のモデルの取得・読み込みの進み具合（裏方から）。
+// 初回のモデルの取得・読み込みの進み具合（Service Workerから）。
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type === MSG.NOTICE) $('notice').textContent = message.text;
 });
@@ -117,7 +117,7 @@ chrome.runtime.onMessage.addListener((message) => {
   foot.textContent = `翻訳中… ${message.tokens}トークン` + (sec > 0.2 ? `・${(message.tokens / sec).toFixed(1)} tok/s` : '');
 });
 
-/** 選択範囲の訳の吹き出しから渡された文章を入れて訳す（裏方が storage.session に置く）。 */
+/** 選択範囲の訳の吹き出しから渡された文章を入れて訳す（Service Workerが storage.session に置く）。 */
 async function takeText() {
   const { pendingText } = await chrome.storage.session.get('pendingText');
   if (!pendingText) return false;

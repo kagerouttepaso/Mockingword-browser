@@ -1,5 +1,5 @@
 import { themeCss } from '../shared/theme.js';
-// 訳しているページの上部に固定するバー。進み具合（残りの段落・送信中の本数と待ち時間・モデルの準備）と、
+// 訳しているページの上部に固定するバー。進み具合（残りの段落・送信中の同時実行数と待ち時間・モデルの準備）と、
 // 訳文・原文・対訳の切り替えを出す。× は翻訳をやめて元のページに戻す。
 // ページの見た目の影響を受けないよう、閉じた Shadow DOM の中に作る。body の外（html 直下）に置くので、段落の収集や
 // 書き換えの監視にも入らない。操作の中身（表示の切り替え・ページ全体・終了）は page/main.js が init で渡す。
@@ -51,7 +51,7 @@ const STYLE = `${themeCss}
 function ensureBar() {
   if (bar.host?.isConnected) return;
   const host = document.createElement('div');
-  // 入れ物には page.css の .plamo-ui（枠・影）を当てない。見た目はすべて Shadow DOM の中で決める。
+  // 要素には page.css の .plamo-ui（枠・影）を当てない。見た目はすべて Shadow DOM の中で決める。
   host.className = 'plamo-ui-host';
   host.dataset.mwTheme = globalThis.__mockingwordTheme ?? 'system';
   host.style.cssText = 'all: initial !important;';
@@ -102,12 +102,12 @@ export function removeBar() {
   bar.host?.remove();
 }
 
-/** 返事を待っている本数と、いちばん長く待っている秒数（何を待っているかを見えるようにする）。 */
+/** 返事を待っている同時実行数と、いちばん長く待っている秒数（何を待っているかを見えるようにする）。 */
 function waiting() {
   if (state.chunks.size === 0) return '';
   const oldest = Math.min(...[...state.chunks.values()].map((c) => c.t));
   const tps = tokensPerSecond();
-  return `（送信中 ${state.chunks.size}本・最長 ${Math.round((performance.now() - oldest) / 1000)}秒${tps ? `・${tps} tok/s` : ''}）`;
+  return `（送信中 ${state.chunks.size}件・最長 ${Math.round((performance.now() - oldest) / 1000)}秒${tps ? `・${tps} tok/s` : ''}）`;
 }
 
 /** バーの表示を今の状態に合わせる。外しているときは何もしない。 */

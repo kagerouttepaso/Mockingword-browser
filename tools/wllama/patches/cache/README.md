@@ -25,9 +25,9 @@ cache_prompt: false,
 
 固定版へ cache 単独、および `commands,sampling,cache,cpu` の順で全パッチの `git apply --check --whitespace=error-all`、適用、`git diff --check` が成功した。ビルド・実機計測は統率者が行う。
 
-1. 基準版、0001のみ、0001+0002と `cache_prompt:false` を、同じモデル・入力・同時本数で比較する。0001の cache RAM と checkpoint の寄与を分離する場合は、一方の代入だけを外した計測用 checkout を使う。
+1. 基準版、0001のみ、0001+0002と `cache_prompt:false` を、同じモデル・入力・同時実行数で比較する。0001の cache RAM と checkpoint の寄与を分離する場合は、一方の代入だけを外した計測用 checkout を使う。
 2. KV 保存に由来する GPU 読取り bytes・Map 回数・時間、生成終了から要求の完了通知までの時間、次の要求の prefill／decode 時間を測る。logits の読取りと分けて集計する。
-3. 異なる入力の連続要求、同時要求、取消後の再実行で、完了した slot の KV が残らず、稼働中の slot の出力・目印が保たれることを確認する。GPU の予約メモリー量は KV セル解放の判定には使わない。
+3. 異なる入力の連続要求、同時要求、取消後の再実行で、完了した slot の KV が残らず、稼働中の slot の出力・マーカーが保たれることを確認する。GPU の予約メモリー量は KV セル解放の判定には使わない。
 
 ## 出典とライセンス
 

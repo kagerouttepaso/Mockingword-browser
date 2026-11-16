@@ -8,9 +8,9 @@ import { clear as clearCache, stats as cacheStats } from '../core/cache.js';
 import { migrate, settings } from './config.js';
 import { addLog, clearLogs, logs } from './logs.js';
 import { lastUse, markUse, startIdleCheck } from './idle.js';
-import { buildMenus } from './menus.js';
+import { buildMenus, fitMenus } from './menus.js';
 import { autoTune, speedTest, stopTune, tuning } from './tune.js';
-import { onPageLoaded, openTextPage, pageAction, rememberPageState, sendToPage, setBadge, switchModel } from './pages.js';
+import { isViewer, onPageLoaded, openTextPage, pageAction, rememberDocument, rememberPageState, sendToPage, setBadge, switchModel } from './pages.js';
 
 chrome.runtime.onInstalled.addListener(async ({ reason }) => {
   await migrate(reason);
@@ -150,11 +150,17 @@ const handlers = {
     await openTextPage(message.text);
     return { ok: true };
   },
+  async [MSG.PAGE_KIND](message) {
+    return { viewer: await isViewer(message.tabId) };
+  },
   async [MSG.PAGE_STATE](message, sender) {
     await rememberPageState(sender.tab?.id, sender.frameId, message.host, message.mode);
     return { ok: true };
   },
   async [MSG.PAGE_LOADED](message, sender) {
+    await rememberDocument(sender.tab?.id, sender.frameId, message.contentType);
+    if (sender.tab?.active && sender.frameId === 0) await fitMenus(sender.tab.id);
+    if (await isViewer(sender.tab?.id)) return { ok: true }; // 内蔵ビューアの文書は自動で訳さない（訳せない）
     await onPageLoaded(sender.tab?.id, sender.frameId, message.host);
     return { ok: true };
   },

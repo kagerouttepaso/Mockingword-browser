@@ -280,3 +280,12 @@ export function siteOf(host) {
   const secondLevel = labels.at(-1).length === 2 && /^(co|ne|or|ac|go|ed|gr|lg|com|net|org|edu|gov)$/.test(labels.at(-2));
   return labels.slice(secondLevel ? -3 : -2).join('.');
 }
+
+/**
+ * ページ側の部品（ページ・段落の翻訳、選択範囲の吹き出し）が働く文書か。document.contentType で決める。
+ * HTML・XML・テキストの文書だけが対象。PDF・画像・動画はブラウザーが内蔵のビューアで表示し、文字はビューアの枠の中にあって
+ * 拡張機能は差し込めない（PDF は、外側の文書の中に内蔵ビューアの拡張機能のページがあり、その中に本体の枠がある。2026-11-16、Brave で確認）。
+ */
+export function pageReadable(contentType) {
+  return !contentType || /^text\/|[/+]xml$/.test(contentType);
+}

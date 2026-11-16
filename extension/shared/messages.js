@@ -14,7 +14,7 @@ export const MSG = {
   OPEN_TEXT_WITH: 'open-text-with', // { text }：選んだ文章を入れてテキスト翻訳を開く
 
   // page/watch.js → Service Worker
-  PAGE_LOADED: 'page-loaded', // { host }
+  PAGE_LOADED: 'page-loaded', // { host, contentType }
   SELECTION_ICON: 'selection-icon', // { text }
 
   // 画面（ui/）→ Service Worker
@@ -23,6 +23,7 @@ export const MSG = {
   PAGE_ACTION: 'page-action', // { tabId, action: 'toggle'|'trans'|'orig'|'both'|'stop' }
   SWITCH_MODEL: 'switch-model', // { model, tabId }
   OPEN_TEXT: 'open-text',
+  PAGE_KIND: 'page-kind', // { tabId } → { viewer }：内蔵ビューアで表示している文書（PDF など）か
   CACHE_CLEAR: 'cache-clear',
   CACHE_STATS: 'cache-stats', // → { count, bytes, limit, usage }
   LOGS_GET: 'logs-get',

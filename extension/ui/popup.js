@@ -6,10 +6,12 @@ import { MSG } from '../shared/messages.js';
 const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 const send = (message) => chrome.runtime.sendMessage(message);
 
-/** ブラウザーの内部ページ（brave:// など）や拡張機能のページは訳せない。 */
-const translatable = /^(https?|file):/.test(tab?.url ?? '');
+/** ブラウザーの内部ページ（brave:// など）や拡張機能のページは訳せない。内蔵ビューアで表示している PDF などは、選んだ文章だけ訳せる。 */
+const viewer = tab?.id != null && (await send({ type: MSG.PAGE_KIND, tabId: tab.id }).then((r) => !!r?.viewer, () => false));
+const translatable = !viewer && /^(https?|file):/.test(tab?.url ?? '');
 for (const button of document.querySelectorAll('#page, [data-show]')) button.disabled = !translatable;
-if (!translatable) document.getElementById('page').textContent = 'このページは訳せません';
+if (viewer) document.getElementById('page').textContent = 'PDFなどは文章を選んで右クリックで訳せます';
+else if (!translatable) document.getElementById('page').textContent = 'このページは訳せません';
 
 // 訳しているページなら、メインのボタンを「元のページに戻す」にする（ページ側の部品が無ければ訳していない）。
 const translating = translatable && (await chrome.tabs.sendMessage(tab.id, { type: MSG.GET_STATE }).then((r) => r?.translating, () => false));

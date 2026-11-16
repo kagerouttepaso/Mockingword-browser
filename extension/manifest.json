@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Mockingword",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "Webページ・選択した文章・入力したテキストを、ブラウザー内のAIで日本語に翻訳します。翻訳内容を外部サーバーへ送信しません。",
   "minimum_chrome_version": "124",
   "permissions": [
@@ -57,7 +57,7 @@
     "value": "require-corp"
   },
   "action": {
-    "default_title": "Mockingword 0.9.2",
+    "default_title": "Mockingword 0.9.3",
     "default_popup": "ui/popup.html",
     "default_icon": {
       "16": "icons/icon16.png",

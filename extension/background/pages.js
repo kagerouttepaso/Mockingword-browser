@@ -1,7 +1,7 @@
 // ページへの差し込みと、ページの翻訳の操作。同じサイト内で移ったページの自動翻訳、テキスト翻訳のページを開く操作もここに置く。
 
 import { MSG } from '../shared/messages.js';
-import { siteOf } from '../shared/text.js';
+import { pageReadable, siteOf } from '../shared/text.js';
 import { settings } from './config.js';
 
 /**
@@ -20,8 +20,12 @@ export async function sendToPage(tabId, message, frameId = 0) {
   return chrome.tabs.sendMessage(tabId, message, { frameId });
 }
 
-/** ページの翻訳・表示の切り替え。action：'toggle'（訳す／原文⇄訳文）・'trans'・'orig'・'both'・'stop'（やめて元に戻す）。 */
+/**
+ * ページの翻訳・表示の切り替え。action：'toggle'（訳す／原文⇄訳文）・'trans'・'orig'・'both'・'stop'（やめて元に戻す）。
+ * 内蔵ビューアで表示している文書（PDF など）はページを訳せないので、テキスト翻訳を開く（Alt+T を押して何も起きないのを避ける）。
+ */
 export async function pageAction(tabId, action) {
+  if (await isViewer(tabId)) return openTextPage();
   if (action === 'stop') return sendToPage(tabId, { type: MSG.STOP });
   if (action === 'toggle') return sendToPage(tabId, { type: MSG.TOGGLE, mode: (await settings()).mode });
   return sendToPage(tabId, { type: MSG.START, mode: action });
@@ -57,6 +61,26 @@ export function setBadge(tabId, pending) {
   chrome.action.setBadgeText({ tabId, text: pending > 0 ? String(Math.min(pending, 999)) : '' });
 }
 
+// ---------------- 内蔵ビューアで表示している文書 ----------------
+// PDF などはブラウザーの内蔵ビューアが表示し、拡張機能はその中へ差し込めない（shared/text.js の pageReadable）。
+// いちばん外側の枠の page/watch.js が知らせる文書の種類を、タブごとに storage.session へ覚える（Service Workerが止まっても残す）。
+// 知らせが来ないページ（file:// など）は普通のページとして扱い、差し込みに失敗したときの戻り道（menus.js）で受ける。
+
+const viewerKey = (tabId) => 'viewer:' + tabId;
+
+/** タブで開いている文書の種類を覚える。いちばん外側の枠だけを見る。 */
+export async function rememberDocument(tabId, frameId, contentType) {
+  if (tabId == null || frameId !== 0) return;
+  if (pageReadable(contentType)) await chrome.storage.session.remove(viewerKey(tabId));
+  else await chrome.storage.session.set({ [viewerKey(tabId)]: true });
+}
+
+/** タブが内蔵ビューアで表示している文書（PDF など）か。 */
+export async function isViewer(tabId) {
+  if (tabId == null) return false;
+  return !!(await chrome.storage.session.get(viewerKey(tabId)))[viewerKey(tabId)];
+}
+
 // ---------------- 同じサイト内の移動で自動で訳す ----------------
 // ページを訳したタブでは、同じサイト（github.com と docs.github.com のように末尾が同じドメイン）のページへ移ったら、
 // 移動先も同じ表示で訳す。原文表示に戻す・翻訳をやめる・別のサイトへ移ると止める。タブごとに storage.session へ覚える。
@@ -84,4 +108,4 @@ export async function onPageLoaded(tabId, frameId, host) {
   await sendToPage(tabId, { type: MSG.START, mode: auto.mode });
 }
 
-chrome.tabs.onRemoved.addListener((tabId) => chrome.storage.session.remove(autoKey(tabId)));
+chrome.tabs.onRemoved.addListener((tabId) => chrome.storage.session.remove([autoKey(tabId), viewerKey(tabId)]));

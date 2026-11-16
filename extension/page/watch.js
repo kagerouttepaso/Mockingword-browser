@@ -9,7 +9,8 @@ function applyMockingwordTheme(value) {
 chrome.storage.sync.get({theme:'system'}).then(s=>applyMockingwordTheme(s.theme)).catch(()=>{});
 chrome.storage.onChanged.addListener((c,area)=>{if(area==='sync'&&c.theme)applyMockingwordTheme(c.theme.newValue)});
 // すべてのページに入れる小さな部品。次の2つだけを行い、ページの文字を外へ送ることはない。
-// 1. ページを読み込んだことをService Workerへ知らせる（同じサイト内で移ったページも続けて訳すため。ホスト名だけ）。
+// 1. ページを読み込んだことをService Workerへ知らせる（同じサイト内で移ったページも続けて訳すため。ホスト名と文書の種類だけ。
+//    種類は、PDF のように内蔵ビューアで表示する文書で右クリックのメニューを絞るため）。
 // 2. 文章を選んだら、選択範囲の近くに「訳」アイコンを出す（押すと選択範囲の訳を吹き出しで出す）。
 // manifest の content_scripts で入れる通常のスクリプトなので import できない。メッセージの名前（'page-loaded'・'selection-icon'）と
 // 選択の判定は shared/messages.js・shared/text.js の worthSelection と同じものを直接書いている。
@@ -24,7 +25,7 @@ function tell(message) {
 }
 
 if (window.top === window) {
-  const notify = () => tell({ type: 'page-loaded', host: location.hostname });
+  const notify = () => tell({ type: 'page-loaded', host: location.hostname, contentType: document.contentType });
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', notify, { once: true });
   else notify();
 }

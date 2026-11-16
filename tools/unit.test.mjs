@@ -1,7 +1,7 @@
 // 壊れても普段の利用では気づけないまま訳文が欠ける・誤るものだけを確かめる（docs/06「試験」）。実行：node --test tools/unit.test.mjs
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { runaway, splitLong, untranslated } from '../extension/shared/text.js';
+import { pageReadable, runaway, splitLong, untranslated } from '../extension/shared/text.js';
 import { translateBatch } from '../extension/core/translator.js';
 import { decode, encode } from '../extension/shared/markup.js';
 
@@ -90,4 +90,9 @@ test('untranslated：短い英字のバッジだけの行は、英語のまま�
   const sentence = 'Returns a <a1><c2>Bluetooth</c2></a1> object for the current document.';
   assert.equal(untranslated(sentence, sentence), true);
   assert.equal(untranslated('<a1>This value may not be changed by scripts</a1>', '<a1>This value may not be changed by scripts</a1>'), true, '長い文のバッジは訳し直す');
+});
+
+test('pageReadable：HTML・XML・テキストの文書だけページ側の部品を使う。PDF・画像は内蔵ビューアの文書として扱う', () => {
+  for (const t of ['text/html', 'application/xhtml+xml', 'image/svg+xml', 'application/xml', 'text/plain', '']) assert.equal(pageReadable(t), true, t);
+  for (const t of ['application/pdf', 'image/png', 'video/mp4']) assert.equal(pageReadable(t), false, t);
 });

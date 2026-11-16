@@ -1,6 +1,6 @@
 // ページ側の状態と、裏方とのやり取り・ログの小さな道具。ページ側のモジュールはこの state を共有する。
 
-import { MSG } from '../shared/messages.js';
+import { LOG_TAG, MSG } from '../shared/messages.js';
 
 export const state = {
   /** ページ全体を訳しているか（段落だけ訳したときは false）。 */
@@ -114,10 +114,10 @@ export function tokensPerSecond() {
 }
 
 export function log(message) {
-  console.info('[Mockingword] ' + message);
+  console.info(`${LOG_TAG} ${message}`);
 }
 
 /** 速さの調査用。開発者ツールのコンソールで「詳細」を表示すると見える。 */
 export function debug(message) {
-  console.debug(`[Mockingword] ${((performance.now() - (state.t0 || performance.now())) / 1000).toFixed(2)}s ${message}`);
+  console.debug(`${LOG_TAG} ${((performance.now() - (state.t0 || performance.now())) / 1000).toFixed(2)}s ${message}`);
 }

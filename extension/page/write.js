@@ -1,7 +1,7 @@
 // 訳文をページに書き込む・消す。表示の切り替えは html 要素のクラスと page/page.css だけで行う
 // （plamo-mode-trans：訳文、plamo-mode-orig：原文、plamo-mode-both：対訳）。設計は docs/04_ページの翻訳.md「書き込み」。
 
-import { MARK_TAG } from '../shared/text.js';
+import { decode } from '../shared/markup.js';
 import { state } from './state.js';
 
 const MODES = ['trans', 'orig', 'both'];
@@ -19,38 +19,32 @@ export function showingTranslation() {
   return html.classList.contains('plamo-mode-trans') || html.classList.contains('plamo-mode-both');
 }
 
+/** 写した要素から、元の要素の id と拡張機能の印を外す。中の原文の包みは外し、訳文は除く。 */
+function clean(el) {
+  for (const x of [el, ...el.querySelectorAll('[id], [data-plamo-hide]')]) {
+    x.removeAttribute('id');
+    x.removeAttribute('data-plamo-hide'); // 原文側の印を写すと、訳文表示で訳文の中まで隠れる
+  }
+  for (const wrap of el.querySelectorAll('[data-plamo-orig]')) wrap.replaceWith(...wrap.childNodes);
+  for (const tr of el.querySelectorAll('.plamo-tr')) tr.remove();
+  return el;
+}
+
 /**
- * 訳文の目印を要素に戻す。リンクは元のリンクの属性（href など）を写した新しいリンクに訳した文字を入れ、
- * コードは元の要素をそのまま写す。目印が崩れていたら（番号が合わない・閉じていない）、目印を外した文字にする。
+ * 訳文を要素に戻す。目印の読み取りと崩れの扱いは shared/markup.js の decode が行い、ここは木を DOM にするだけ：
+ * 入れ物（wrap）は元の要素の写し（属性はそのまま、中身は訳文）、写す要素・文字の無い要素は元の要素をそのまま写す。
+ * 訳文の文字は文字のノードとして入れる（モデルの出力を HTML として解釈しない）。
  */
 export function render(translation, marks) {
-  const out = [];
-  const text = (s) => document.createTextNode(s.replace(MARK_TAG, ''));
-  const re = /<([ac])(\d+)>([\s\S]*?)<\/\1\2>/g;
-  let last = 0;
-  for (let m; (m = re.exec(translation)); ) {
-    if (m.index > last) out.push(text(translation.slice(last, m.index)));
-    last = re.lastIndex;
-    const original = marks?.[m[1]]?.[Number(m[2]) - 1];
-    if (!original) {
-      out.push(text(m[3]));
-    } else if (m[1] === 'a') {
-      const link = original.cloneNode(false);
-      link.removeAttribute('id');
-      link.removeAttribute('data-plamo-shell'); // 原文側の入れ物の印は写さない（写すと訳文表示で訳文のリンクまで隠れる）
-      link.textContent = m[3];
-      out.push(link);
-    } else {
-      const code = original.cloneNode(true);
-      code.removeAttribute('id');
-      // 原文の文字は訳文が届いたときに <span data-plamo-orig> で包まれている（訳文表示で隠れる）ので、写しでは包みを外す。
-      for (const wrap of code.querySelectorAll('[data-plamo-orig]')) wrap.replaceWith(...wrap.childNodes);
-      for (const el of [code, ...code.querySelectorAll('[data-plamo-shell]')]) el.removeAttribute('data-plamo-shell');
-      out.push(code);
-    }
-  }
-  out.push(text(translation.slice(last)));
-  return out;
+  const build = (node) => {
+    if (node.type === 'text') return document.createTextNode(node.text);
+    const el = marks[node.id - 1].el;
+    if (node.type !== 'wrap') return clean(el.cloneNode(true));
+    const copy = clean(el.cloneNode(false));
+    copy.append(...node.children.map(build));
+    return copy;
+  };
+  return decode(translation, marks.map((m) => m.kind)).map(build);
 }
 
 /**
@@ -90,53 +84,20 @@ export function apply(para, translation) {
     span.className = 'plamo-tr';
     span.lang = 'ja';
     span.setAttribute('translate', 'no');
-    // 置き場所：段落の文字がすべて同じリンクの中なら、そのリンクの中（見出しのリンクなどを押せるままにする）。
-    // それ以外は、段落の直下で、最後の文字の後ろ。
-    let anchor = nodes[nodes.length - 1].parentNode; // 包んだ span
-    const links = new Set(nodes.map((n) => n.parentElement.closest('a')));
-    const link = links.size === 1 ? [...links][0] : null;
-    if (!(link && para.element.contains(link))) {
-      while (anchor.parentNode && anchor.parentNode !== para.element) anchor = anchor.parentNode;
-    }
+    // 置き場所：段落の文字をすべて含むいちばん内側の要素（markup の root。太字だけの行・見出しのリンクならその中）の直下で、
+    // 最後の文字の後ろ。太字の見出しは太字のまま、見出しのリンクは押せるままになる。
+    const root = para.root?.isConnected && para.root.contains(nodes.at(-1)) ? para.root : para.element;
+    let anchor = nodes.at(-1).parentNode; // 包んだ span
+    while (anchor.parentNode && anchor.parentNode !== root) anchor = anchor.parentNode;
     anchor.parentNode.insertBefore(span, anchor.nextSibling);
     para.trSpan = span;
   }
   para.trSpan.replaceChildren(...render(translation, para.marks));
-  markShells(para);
+  // 段落の中の要素（太字・コード・<br>・アイコンなど）は、訳文に写しが入るので、中身がすべてこの段落のものなら訳文表示で丸ごと隠す。
+  // 文字だけを隠すと、文字以外の中身が残る（コードの空の箱、<br> の空行。2026-11-11・11-16）。
+  for (const el of para.hide ?? []) if (el.isConnected) el.setAttribute('data-plamo-hide', '');
   if (first) state.translated++;
   state.firstScreen.delete(para);
-}
-
-/** 文字の他に見える中身。これを含む入れ物は隠さない。 */
-const VISIBLE_CONTENT = 'img, svg, picture, video, canvas, iframe, object, embed, input, select, textarea, button, math';
-
-/** el の中の文字がすべて訳文表示で隠れる原文か（空白だけのノードは数えない）。 */
-function onlyHiddenText(el) {
-  if (el.querySelector(VISIBLE_CONTENT)) return false;
-  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-    if (/\S/.test(n.data) && !n.parentElement?.closest('[data-plamo-orig="done"]')) return false;
-  }
-  return true;
-}
-
-/**
- * 原文を隠すと中身が空になる入れ物（インラインコード・背景や枠のあるリンクなど）に印（data-plamo-shell）を付け、
- * 訳文表示で入れ物ごと隠す（page.css）。文字だけを隠すと、余白と背景の空の箱が段落の頭に並んで見えた
- * （2026-11-11、GitHub の README で50個。訳文の中には元のコードの写しが入るので、原文側の入れ物は要らない）。
- * 段落の要素と、訳文を中に置いたリンクは隠さない。
- */
-function markShells(para) {
-  for (const n of para.nodes) {
-    if (!n.isConnected) continue;
-    let shell = null;
-    // 包み（data-plamo-orig）の親から段落の要素の手前まで上がり、中身がすべて隠れる一番外側の入れ物を探す。
-    for (let el = n.parentElement?.parentElement; el && el !== para.element && para.element.contains(el); el = el.parentElement) {
-      if (el.contains(para.trSpan) || !onlyHiddenText(el)) break;
-      shell = el;
-    }
-    shell?.setAttribute('data-plamo-shell', '');
-  }
 }
 
 /**
@@ -157,6 +118,6 @@ export function setWorking(paras, on) {
 export function removeAll() {
   for (const span of document.querySelectorAll('.plamo-tr')) span.remove();
   for (const wrap of document.querySelectorAll('[data-plamo-orig]')) wrap.replaceWith(...wrap.childNodes);
-  for (const shell of document.querySelectorAll('[data-plamo-shell]')) shell.removeAttribute('data-plamo-shell');
+  for (const el of document.querySelectorAll('[data-plamo-hide]')) el.removeAttribute('data-plamo-hide');
   setModeClass(null);
 }

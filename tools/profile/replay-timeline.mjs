@@ -2,7 +2,7 @@
 // 入力はすべてエポックからのミリ秒にそろえる。
 //   t0        … ページへ「訳す」を送った時刻
 //   firstLine … 訳文が最初にページへ入った時刻（null 可）
-//   consoles  … ページのコンソールの [PLaMo翻訳] 行 [{ t, text }]（CDP の timestamp）
+//   consoles  … ページのコンソールの LOG_TAG（shared/messages.js）の行 [{ t, text }]（CDP の timestamp）
 //   traces    … 調査用のログ（裏方の logs。time は ISO、裏方が受け取った時刻）
 //   steps     … 計測版 wllama の step（perf-trace.mjs の analyzeEvents().steps。無ければ []）
 //   parallel  … 同時本数

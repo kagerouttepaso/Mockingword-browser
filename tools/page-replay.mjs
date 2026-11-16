@@ -20,6 +20,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { launch, message, sleep, tabIdOf, enableModelCache } from './lib/browser.mjs';
 import { partHeaders, readMhtml } from './lib/mhtml.mjs';
+import { LOG_TAG } from '../extension/shared/messages.js';
 import { analyzeEvents } from './lib/perf-trace.mjs';
 import { workRoot } from './wllama/support.mjs';
 import { resolveArtifact } from './profile/cases.mjs';
@@ -89,7 +90,7 @@ async function translatePage(b) {
     if (m.sessionId !== session) return;
     if (m.method === 'Runtime.consoleAPICalled') {
       const text = m.params.args.map((a) => a.value ?? '').join(' ');
-      if (text.includes('[PLaMo翻訳]')) consoles.push({ t: m.params.timestamp, text });
+      if (text.includes(LOG_TAG)) consoles.push({ t: m.params.timestamp, text });
     }
     if (m.method === 'Fetch.requestPaused') {
       const url = m.params.request.url;

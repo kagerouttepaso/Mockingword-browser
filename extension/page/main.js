@@ -5,7 +5,9 @@ import { MSG } from '../shared/messages.js';
 import { short, worthTranslating } from '../shared/text.js';
 import { initBar, removeBar, setBarDone, showBar, updateBar, barMessage } from './bar.js';
 import { clearNotice, notice, toast, translateSelection } from './bubble.js';
-import { OWN, blocksInRange, collect, markup } from './collect.js';
+import { blocksInRange, collect } from './collect.js';
+import { OWN } from './dom.js';
+import { markup } from './paragraph.js';
 import { cancelStale, enqueue, pump, report, resetMeasure, showPartial } from './queue.js';
 import { log, notify, state, trace } from './state.js';
 import { apply, removeAll, setModeClass, showingTranslation } from './write.js';
@@ -196,10 +198,9 @@ function observe() {
       }
       roots.clear();
       for (const para of changed) {
-        const { text, plain, marks } = markup(para.element, para.nodes.filter((n) => n.isConnected));
+        const { text, plain, marks, hide, root } = markup(para.element, para.nodes.filter((n) => n.isConnected));
         if (text !== para.text && worthTranslating(plain) && (para.changes = (para.changes ?? 0) + 1) <= MAX_CHANGES) {
-          para.text = text;
-          para.marks = marks;
+          Object.assign(para, { text, marks, hide, root });
           added.push(para);
         }
       }

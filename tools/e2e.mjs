@@ -51,12 +51,32 @@ const READING = `<!doctype html><html><head><meta charset="utf-8"><title>reading
 const FRESH = (name) => `<!doctype html><html><head><meta charset="utf-8"><title>${name}</title></head><body style="font:16px sans-serif">
 ${['Organization roles grant members access', 'Repository rulesets protect important branches', 'Security managers review new alerts', 'Billing managers can download invoices', 'Moderators can block abusive users'].map((s, i) => `<p>${s} on the ${name.slice(1)} page, item ${i + 1}, and the settings take effect immediately.</p>`).join('')}</body></html>`;
 
+/**
+ * 段落の中の要素の試験ページ。GitHub のコメントの形（Markdown の改行が <br> になり、太字の見出し・設定の列・ログの行が1つの <p> に並ぶ。
+ * 2026-11-16、作者の報告）と、太字の中のリンク・画像・コード・見た目の変わらない span・手で折り返した文を含む段落。
+ * 段落を1つのまま訳し、要素が訳文に写し直され、訳文表示で原文側の要素が残らないかを見る（docs/11_設計方針.md「段落のデータの流れ」）。
+ */
+const ICON = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12'%3E%3Crect width='12' height='12' fill='%23888'/%3E%3C/svg%3E";
+const COMMENT = `<!doctype html><html><head><meta charset="utf-8"><title>comment</title></head><body style="font:14px/1.5 sans-serif;margin:20px;width:700px">
+<p id="c1"><strong>Environment</strong><br>
+Air Sync 0.2.2 (also seen on 0.2.0)<br>
+Obsidian 1.13.7, Windows 11 desktop (a second Android device syncs the same vault)<br>
+Backend: Google Drive, built-in connection<br>
+<strong>Summary</strong><br>
+Google Drive rejects the update because the remote version is <strong>exactly one ahead</strong> of what the plugin expects.</p>
+<p id="c2"><strong>Log</strong><br>
+[INFO] Sync plan created for the vault<br>
+[ERROR] Push failed because the file changed before the update<br>
+[WARN] Sync completed with errors</p>
+<p id="c3">Read <strong>the <a href="https://example.com/guide">setup guide</a></strong> <img src="${ICON}" width="12" height="12" alt=""> before you change <span class="plain">the settings</span>, and run <code>npm test</code> after<br>
+every change, then call <a href="https://example.com/api"><code>navigator.share()</code></a> to report it.</p></body></html>`;
+
 const server = http.createServer((req, res) => {
   res.writeHead(200, {
     'content-type': 'text/html; charset=utf-8',
     'content-security-policy': "default-src 'none'; script-src 'nonce-t'; style-src 'unsafe-inline'",
   });
-  res.end(req.url === '/layout' ? LAYOUT : req.url === '/reading' ? READING : req.url.startsWith('/cancel') ? FRESH(req.url) : PAGE(req.url));
+  res.end(req.url === '/comment' ? COMMENT : req.url === '/layout' ? LAYOUT : req.url === '/reading' ? READING : req.url.startsWith('/cancel') ? FRESH(req.url) : PAGE(req.url));
 }).listen(PORT);
 
 const t = reporter();
@@ -91,6 +111,7 @@ try {
   await sleep(2000);
   t.check('後から足された SVG も訳さない', (await b.eval(page.session, `document.querySelectorAll('svg .plamo-tr').length`)) === 0);
   await b.screenshot(page.session, path.join(SHOTS, 'page.png'));
+
 
   // ---- 表示の切り替えと、同じサイト内の移動 ----
   await message(b, { type: 'page-action', tabId, action: 'both' });
@@ -143,6 +164,36 @@ try {
   await click(b, page.session, 900, 800);
   await dragSelect(b, page.session, '#ja', 2, 300);
   t.check('日本語を選んでもアイコンは出ない', !(await b.eval(page.session, `!!document.querySelector('html > .plamo-ui-host')`)));
+
+  // ---- 段落の中の要素（<br>・太字・リンク・画像・コード。GitHub のコメント） ----
+  const cm = await b.open(`http://127.0.0.1:${PORT}/comment`);
+  const cmTab = await tabIdOf(b, cm.targetId);
+  const cmBefore = await b.eval(cm.session, `Math.round(document.getElementById('c1').getBoundingClientRect().height)`);
+  await message(b, { type: 'page-action', tabId: cmTab, action: 'trans' });
+  // 訳文の中の要素の数と、訳文表示で見えたまま残る原文側の要素（段落の直下の要素のうち訳文以外）。
+  const PARA = (id) => `(() => { const p = document.getElementById('${id}'); const trs = p.querySelectorAll('.plamo-tr'); const tr = trs[0]; const r = p.getBoundingClientRect();
+    const shown = [...p.children].filter((e) => !e.classList.contains('plamo-tr') && getComputedStyle(e).display !== 'none').map((e) => e.tagName);
+    return { n: trs.length, br: tr?.querySelectorAll('br').length, strong: tr?.querySelectorAll('strong').length, linkInBold: !!tr?.querySelector('strong > a[href="https://example.com/guide"]'),
+      img: tr?.querySelectorAll('img').length, codeLink: !!tr?.querySelector('a[href="https://example.com/api"] > code'), code: tr?.querySelectorAll('code').length, plainSpan: tr?.querySelectorAll('span.plain').length, shown,
+      gapTop: Math.round((tr?.getBoundingClientRect().top ?? 0) - r.top), height: Math.round(r.height), html: tr?.innerHTML }; })()`;
+  const cmTr = await b.waitFor(async () => {
+    const r = { c1: await b.eval(cm.session, PARA('c1')), c2: await b.eval(cm.session, PARA('c2')), c3: await b.eval(cm.session, PARA('c3')) };
+    return r.c1.n && r.c2.n && r.c3.n && r;
+  }, 60000);
+  t.check('<br> の並ぶ段落を1つのまま訳し、訳文に改行と太字が残る', cmTr?.c1.n === 1 && cmTr.c1.br === 5 && cmTr.c1.strong === 3 && cmTr.c2.br === 3 && cmTr.c2.strong === 1, `${cmTr?.c1.html} ／ ${cmTr?.c2.html}`);
+  t.check('訳文表示で原文側の <br>・太字が残らない', cmTr && cmTr.c1.shown.length === 0 && cmTr.c2.shown.length === 0 && cmTr.c3.shown.length === 0 && cmTr.c1.gapTop < 8 && cmTr.c1.height <= cmBefore * 1.2,
+    `見えたままの原文の要素 ${JSON.stringify([cmTr?.c1.shown, cmTr?.c2.shown, cmTr?.c3.shown])}・上の隙間 ${cmTr?.c1.gapTop}px・高さ ${cmBefore}→${cmTr?.c1.height}px`);
+  t.check('太字の中のリンク・画像・コード・中がコードだけのリンクが訳文に写り、見た目の同じ span と文の途中の <br> は目印にしない', cmTr?.c3.linkInBold && cmTr.c3.img === 1 && cmTr.c3.code === 2 && cmTr.c3.codeLink && cmTr.c3.br === 0 && cmTr.c3.plainSpan === 0, cmTr?.c3.html);
+  await message(b, { type: 'page-action', tabId: cmTab, action: 'both' });
+  await sleep(300);
+  const cmBoth = await b.eval(cm.session, `(() => { const p = document.getElementById('c1'); return { orig: [...p.querySelectorAll(':scope > br')].filter((x) => getComputedStyle(x).display !== 'none').length, tr: p.querySelectorAll('.plamo-tr br').length }; })()`);
+  t.check('対訳で原文と訳文のどちらも改行する', cmBoth.orig === 5 && cmBoth.tr === 5, JSON.stringify(cmBoth));
+  await b.screenshot(cm.session, path.join(SHOTS, 'comment-both.png'));
+  await message(b, { type: 'page-action', tabId: cmTab, action: 'trans' });
+  await sleep(300);
+  await b.screenshot(cm.session, path.join(SHOTS, 'comment.png'));
+  await message(b, { type: 'page-action', tabId: cmTab, action: 'stop' });
+  await b.send('Target.closeTarget', { targetId: cm.targetId });
 
   // ---- 訳す順番（本文を先に、ナビ・サイドバー・ヘッダー・フッターを後に）、途中の装飾、訳し終わった行から出す ----
   const lay = await b.open(`http://127.0.0.1:${PORT}/layout`);

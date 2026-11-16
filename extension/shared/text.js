@@ -1,8 +1,7 @@
 // 文の判定と分割。DOM にも chrome にも触れない純粋な関数だけを置く（Node の単体試験 tools/unit.test.mjs で確かめる）。
 // 裏方（core/）・見えないページ（offscreen/）・ページ側（page/）から使う。
 
-/** リンク・インラインコードの目印（<a1>…</a1>、<c1>…</c1>）。page/collect.js が付け、page/write.js が要素に戻す。 */
-export const MARK_TAG = /<\/?[ac]\d+>/g;
+import { MARK_TAG, labelsOf } from './markup.js';
 
 const JAPANESE = /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u;
 const KANA = /[぀-ヿ]/;
@@ -36,17 +35,23 @@ export function worthSelection(text) {
   return text.length >= 2 && text.length <= 5000 && /\p{L}/u.test(text) && !KANA.test(text);
 }
 
+/** 原文のまま返るのが正しいことが多い、短い英字のラベル（3語以下かつ24字以下。製品名・モデル名・ボタン名・バッジ）か。 */
+const shortLatinLabel = (s) => !/[^\p{Script=Latin}\p{Script=Common}\p{Script=Inherited}]/u.test(s) && s.split(' ').length <= 3 && s.length <= 24;
+
 /**
  * まとめ訳しの1行が訳されていないか。原文のままか、文字を含む原文に対して日本語の文字が1つもない。
  * 言語の混ざったまとまりでは、最初の言語の行だけ訳し、残りの行を原文のまま写すことがある
  * （2026-11-09、0.8Bで韓国語・フランス語・ドイツ語の3行）。その行だけ1行ずつ訳し直すために見る。
  * 短い英字の行（3語以下かつ24字以下。製品名・モデル名・ボタン名）は、原文のまま返るのが正しいことが多いので訳し直さない
  * （GitHub Copilot の設定ページで、問い合わせが70回から53回に減った）。
+ * バッジが並ぶだけの行（MDN の「Navigator.bluetooth」＋「Read only」「Secure context」。訳す文字がすべて入れ物の中）も、
+ * 各バッジが短い英字のラベルなら同じく訳し直さない。日本語の文書でも Read only のままのほうが読みやすい（作者の判断、2026-11-16）。
+ * 訳し直すと、まとめ訳しでモデルが英語のまま返すたびに1行ずつ送り直し、MDN の Navigator のページで問い合わせが 68→114 回に増えた。
  */
 export function untranslated(source, output) {
   const norm = (s) => normalize(s.replace(MARK_TAG, ''));
   const plain = norm(source);
-  if (!/[^\p{Script=Latin}\p{Script=Common}\p{Script=Inherited}]/u.test(plain) && plain.split(' ').length <= 3 && plain.length <= 24) return false;
+  if (shortLatinLabel(plain) || labelsOf(source)?.every(shortLatinLabel)) return false;
   const out = norm(output);
   return plain === out || (/\p{L}/u.test(plain) && !JAPANESE.test(out));
 }

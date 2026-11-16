@@ -2,7 +2,9 @@
 // 正解訳はないので、機械的に数えられる崩れ（行のずれ・打ち切り・目印・英字のまま）と、版どうしで訳が変わった段落を出す。
 // 変わった段落は対訳表にして、人が読んで良し悪しを判断する。
 
-const MARK = /<\/?[ac]\d+>/;
+import { MARK_TAG } from '../../extension/shared/markup.js';
+
+const MARK = new RegExp(MARK_TAG.source); // 目印の文法の正本（g なしで test する）
 
 /** 英字の語が残っているか。原文に英字の語が3つ以上あり、訳文の文字の半分以上が英字なら「英字のまま」と数える。 */
 export function untranslated(source, translation) {

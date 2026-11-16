@@ -5,6 +5,8 @@
 // 結果の残し方は docs/06_開発と検証.md「速さの測定」。
 import { launch, message, sleep, tabIdOf } from './lib/browser.mjs';
 import { partHeaders, readMhtml } from './lib/mhtml.mjs';
+import { MARK_TAG } from '../extension/shared/markup.js';
+import { LOG_TAG } from '../extension/shared/messages.js';
 // モデルは固定URLの共有キャッシュから供給し、MHTML 用の横取りと分ける。
 import { enableModelCache } from './lib/browser.mjs';
 
@@ -37,7 +39,7 @@ try {
       if (m.sessionId !== session) return;
       if (m.method === 'Runtime.consoleAPICalled' && m.params.type !== 'debug') {
         const text = m.params.args.map((a) => a.value ?? '').join(' ');
-        if (text.includes('[PLaMo翻訳]')) logs.push(text);
+        if (text.includes(LOG_TAG)) logs.push(text);
       }
       if (m.method === 'Fetch.requestPaused') {
         const part = mhtml.parts.get(m.params.request.url);
@@ -80,7 +82,7 @@ try {
     if (!done) console.log('  訳し終わりのログが届かない', JSON.stringify({ logs: logs.slice(-5), tr: await b.eval(session, `document.querySelectorAll('.plamo-tr').length`), bar: await b.eval(session, `!!document.querySelector('.plamo-ui-host')`) }));
     const r = await b.eval(session, `(() => {
       const trs = [...document.querySelectorAll('.plamo-tr')];
-      return { paragraphs: trs.length, withLinks: trs.filter((t) => t.querySelector('a[href]')).length, brokenMarks: trs.filter((t) => /<\\/?[ac]\\d+>/.test(t.textContent)).length };
+      return { paragraphs: trs.length, withLinks: trs.filter((t) => t.querySelector('a[href]')).length, brokenMarks: trs.filter((t) => new RegExp(${JSON.stringify(MARK_TAG.source)}).test(t.textContent)).length };
     })()`);
     console.log(`${label}：${((Date.now() - t0) / 1000).toFixed(1)}秒、${logs.filter((l) => /訳し終わり/.test(l)).join(' / ')}`);
     console.log(`  訳文 ${r.paragraphs}段落、リンクを含む ${r.withLinks}段落、崩れた目印 ${r.brokenMarks}`);

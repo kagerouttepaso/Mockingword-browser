@@ -60,3 +60,6 @@ export const MSG = {
 };
 
 export const OFFSCREEN = 'offscreen';
+
+/** ページ側の調査用のログの頭。計測ツール（tools/page-replay.mjs・tools/bench.mjs）もこれで行を拾う（名前を変えたときにツールが黙って行を拾えなくなった。2026-11-16）。 */
+export const LOG_TAG = '[Mockingword]';

@@ -65,8 +65,9 @@ const handlers = {
   async [MSG.TRANSLATE_ONE](message, sender, options) {
     lastTabId = sender.tab?.id ?? lastTabId;
     await markUse();
-    // テキスト翻訳のページは原文の言語を自分で選び、行ごとに訳す（lines）。
+    // テキスト翻訳のページは原文と訳文の言語を自分で選び、行ごとに訳す（lines）。ほかは日本語へ訳す。
     if (message.source !== undefined) options.source = message.source || null;
+    if (message.target) options.target = message.target;
     // stream：テキスト翻訳のページへ、訳文の途中と生成したトークン数を0.1秒おきに知らせる（待たずに読めるように）。
     // 速さは最初のトークンからの時間で割る（モデルの読み込み・原文の読み込みの待ちを入れない）。
     let tokens = 0;

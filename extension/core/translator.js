@@ -90,7 +90,7 @@ export async function translateBatch(texts, options) {
   // （2026-11-13、モデルの出力を差し替えた再現で確認。見た目では訳が付いているので気づけない）。
   if (!r.cut && lines.length === pending.length) {
     pending.forEach((i, k) => {
-      if (untranslated(texts[i], lines[k])) return redo.push(i);
+      if (untranslated(texts[i], lines[k], options.target)) return redo.push(i);
       results[i] = lines[k];
       remember(cacheKey(texts[i], options), lines[k]);
     });

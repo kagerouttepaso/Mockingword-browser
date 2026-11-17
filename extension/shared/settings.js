@@ -70,6 +70,12 @@ export function fillLanguages(select, autoLabel = '自動（段落ごとにモ�
   for (const [code, label] of LANGUAGES) select.append(new Option(label, code));
 }
 
+/** 訳文の言語の選択（select 要素）に、日本語と52言語を入れる（テキスト翻訳。ページの翻訳は日本語へ訳す）。 */
+export function fillTargets(select) {
+  select.append(new Option('日本語', 'ja'));
+  for (const [code, label] of LANGUAGES) select.append(new Option(label, code));
+}
+
 /** モデルの状態を短い文にする（ボタンのメニュー・設定画面で使う）。 */
 export function describeStatus(s) {
   if (s?.loading) return `${s.loading} を読み込み中です`;

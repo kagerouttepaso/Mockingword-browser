@@ -39,7 +39,8 @@ export function worthSelection(text) {
 const shortLatinLabel = (s) => !/[^\p{Script=Latin}\p{Script=Common}\p{Script=Inherited}]/u.test(s) && s.split(' ').length <= 3 && s.length <= 24;
 
 /**
- * まとめ訳しの1行が訳されていないか。原文のままか、文字を含む原文に対して日本語の文字が1つもない。
+ * まとめ訳しの1行が訳されていないか。原文のままか、日本語へ訳すときは文字を含む原文に対して日本語の文字が1つもない
+ * （target は訳文の言語のコード。日本語以外へ訳すときは、原文のままかだけを見る）。
  * 言語の混ざったバッチでは、最初の言語の行だけ訳し、残りの行を原文のまま写すことがある
  * （2026-11-09、0.8Bで韓国語・フランス語・ドイツ語の3行）。その行だけ1行ずつ訳し直すために見る。
  * 短い英字の行（3語以下かつ24字以下。製品名・モデル名・ボタン名）は、原文のまま返るのが正しいことが多いので訳し直さない
@@ -48,12 +49,12 @@ const shortLatinLabel = (s) => !/[^\p{Script=Latin}\p{Script=Common}\p{Script=In
  * 各バッジが短い英字のラベルなら同じく訳し直さない。日本語の文書でも Read only のままのほうが読みやすい（作者の判断、2026-11-16）。
  * 訳し直すと、まとめ訳しでモデルが英語のまま返すたびに1行ずつ送り直し、MDN の Navigator のページでリクエストが 68→114 回に増えた。
  */
-export function untranslated(source, output) {
+export function untranslated(source, output, target = 'ja') {
   const norm = (s) => normalize(s.replace(MARK_TAG, ''));
   const plain = norm(source);
   if (shortLatinLabel(plain) || labelsOf(source)?.every(shortLatinLabel)) return false;
   const out = norm(output);
-  return plain === out || (/\p{L}/u.test(plain) && !JAPANESE.test(out));
+  return plain === out || (target === 'ja' && /\p{L}/u.test(plain) && !JAPANESE.test(out));
 }
 
 /** 長い1段落を、文の切れ目でおよそ max 字ずつに分ける（1スロット4096トークンに収め、生成の打ち切りも避ける）。 */

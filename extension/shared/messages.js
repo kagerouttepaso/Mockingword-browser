@@ -10,7 +10,7 @@ export const MSG = {
   PAGE_STATE: 'page-state', // { mode, host }：同じサイト内の自動翻訳のために表示を知らせる
   PROGRESS: 'progress', // { pending }：ボタンのバッジ
   LOG: 'log', // { event, data, source? }：調査用のログ
-  TRANSLATE_ONE: 'translate-one', // { text, source?, lines?, stream? } → { ok, text, model, tokens, genMs }（選択範囲・テキスト翻訳。stream を渡すと途中を TEXT_PARTIAL で知らせる）
+  TRANSLATE_ONE: 'translate-one', // { text, source?, target?（訳文の言語。既定は ja）, lines?, stream? } → { ok, text, model, tokens, genMs }（選択範囲・テキスト翻訳。stream を渡すと途中を TEXT_PARTIAL で知らせる）
   OPEN_TEXT_WITH: 'open-text-with', // { text }：選んだ文章を入れてテキスト翻訳を開く
 
   // page/watch.js → Service Worker

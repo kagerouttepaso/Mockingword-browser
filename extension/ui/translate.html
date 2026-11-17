@@ -26,6 +26,7 @@
     #output.placeholder { color: var(--muted); }
     .pane-foot { padding: 4px 10px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); min-height: 1.6em; }
     #notice { font-size: 12px; color: var(--muted); }
+    [hidden] { display: none !important; }
   </style>
 <script type="module" src="theme.js"></script>
 </head>
@@ -34,7 +35,7 @@
     <header>
       <h1 class="brand"><img src="../icons/icon48.png" alt=""><span>Mocking<span class="brand-word">word</span></span><span class="screen-title">テキスト翻訳</span><small class="app-version" data-app-version></small></h1>
       <span id="notice"></span>
-      <label>文体
+      <label id="form-label">文体
         <select id="form">
           <option value="polite">です・ます</option>
           <option value="plain">だ・である</option>
@@ -54,7 +55,7 @@
       </section>
       <section class="pane">
         <div class="pane-head">
-          <span class="grow">日本語</span>
+          <select id="target" class="grow" aria-label="訳文の言語"></select>
           <button id="translate" class="primary">翻訳</button>
           <button id="copy">コピー</button>
         </div>

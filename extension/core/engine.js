@@ -68,7 +68,7 @@ export function streamPartial(message) {
 }
 
 /**
- * 1回の生成。options：{ model, device, threads, parallel, ubatch, source, form, requestId, debugLog }。
+ * 1回の生成。options：{ model, device, threads, parallel, ubatch, source, target, form, requestId, debugLog }。
  * text の行数を lines として渡し、まとめ訳しで送った行数より多く出し始めたらOffscreen Documentが打ち切る。
  * onPartial(訳文の途中)・onTokens(増えたトークン数) を渡すと、生成の途中を受け取る（ページの翻訳の requestId とは併用しない）。
  */

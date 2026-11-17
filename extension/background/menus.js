@@ -12,13 +12,16 @@
 import { MSG } from '../shared/messages.js';
 import { unload } from '../core/engine.js';
 import { settings } from './config.js';
-import { isViewer, openTextPage, sendToPage } from './pages.js';
+import { isPdf, isViewer, openPdfPage, openTextPage, sendToPage } from './pages.js';
 
 /** ページ側の部品が要る項目。内蔵ビューアの文書では取り除く。 */
 const PAGE_ONLY = [
   { id: 'selected-paragraphs', title: '選択した段落を日本語に訳す', contexts: ['selection'] },
   { id: 'page', title: 'このページを日本語に訳す', contexts: ['page'] },
 ];
+
+/** 内蔵ビューアで PDF を表示しているときだけの項目。範囲を選ばずに右クリックすると、PDF翻訳のページで開き直す（docs/12_PDFの翻訳.md）。 */
+const PDF_ONLY = [{ id: 'pdf', title: 'このPDFを日本語に訳す', contexts: ['page'] }];
 
 /** 項目を作る。同じ id がもうあれば何もしない（create はエラーを lastError で返すので、読んで捨てる）。 */
 const create = (item) => new Promise((resolve) => chrome.contextMenus.create(item, () => resolve(void chrome.runtime.lastError)));
@@ -27,6 +30,7 @@ export async function buildMenus() {
   await chrome.contextMenus.removeAll();
   await create({ id: 'selection', title: '選択範囲を日本語に訳す', contexts: ['selection'] });
   await create({ id: 'open-text', title: 'テキスト翻訳を開く', contexts: ['action'] });
+  await create({ id: 'open-pdf', title: 'PDFファイルを開いて訳す', contexts: ['action'] });
   await create({ id: 'unload', title: 'モデルを解放してメモリーを空ける', contexts: ['action'] });
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true }).catch(() => []);
   await fitMenus(tab?.id);
@@ -34,8 +38,11 @@ export async function buildMenus() {
 
 /** 前面のタブの文書に合わせて、ページ側の部品が要る項目を作る・取り除く。 */
 export async function fitMenus(tabId) {
-  if (await isViewer(tabId)) await Promise.all(PAGE_ONLY.map(({ id }) => chrome.contextMenus.remove(id).catch(() => {})));
+  const remove = (items) => Promise.all(items.map(({ id }) => chrome.contextMenus.remove(id).catch(() => {})));
+  if (await isViewer(tabId)) await remove(PAGE_ONLY);
   else for (const item of PAGE_ONLY) await create(item);
+  if (await isPdf(tabId)) for (const item of PDF_ONLY) await create(item);
+  else await remove(PDF_ONLY);
 }
 
 chrome.tabs.onActivated.addListener(({ tabId }) => fitMenus(tabId));
@@ -51,6 +58,7 @@ const toTextPage = (info) => openTextPage(info.selectionText ?? '');
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   const id = String(info.menuItemId);
   if (id === 'open-text') return openTextPage();
+  if (id === 'open-pdf') return chrome.tabs.create({ url: chrome.runtime.getURL('ui/pdf.html') });
   if (id === 'unload') return unload();
   if (!tab?.id) return;
   // 右クリックした場所が枠（iframe）の中なら、その枠へ差し込む。
@@ -64,5 +72,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       return sendToPage(tab.id, { type: MSG.TRANSLATE_SELECTED_PARAGRAPHS, mode }, frameId).catch(() => toTextPage(info));
     case 'page':
       return sendToPage(tab.id, { type: MSG.START, mode });
+    case 'pdf':
+      return openPdfPage(tab.id);
   }
 });

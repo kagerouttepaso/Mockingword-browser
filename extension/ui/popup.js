@@ -7,10 +7,15 @@ const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 const send = (message) => chrome.runtime.sendMessage(message);
 
 /** ブラウザーの内部ページ（brave:// など）や拡張機能のページは訳せない。内蔵ビューアで表示している PDF などは、選んだ文章だけ訳せる。 */
-const viewer = tab?.id != null && (await send({ type: MSG.PAGE_KIND, tabId: tab.id }).then((r) => !!r?.viewer, () => false));
+const kind = tab?.id != null ? await send({ type: MSG.PAGE_KIND, tabId: tab.id }).catch(() => null) : null;
+const viewer = !!kind?.viewer;
 const translatable = !viewer && /^(https?|file):/.test(tab?.url ?? '');
 for (const button of document.querySelectorAll('#page, [data-show]')) button.disabled = !translatable;
-if (viewer) document.getElementById('page').textContent = 'PDFなどは文章を選んで右クリックで訳せます';
+// 内蔵ビューアの PDF は、PDF翻訳のページで訳す（docs/12_PDFの翻訳.md）。
+if (kind?.pdf) {
+  document.getElementById('page').disabled = false;
+  document.getElementById('page').textContent = 'このPDFを訳す（Alt+T）';
+} else if (viewer) document.getElementById('page').textContent = 'PDFなどは文章を選んで右クリックで訳せます';
 else if (!translatable) document.getElementById('page').textContent = 'このページは訳せません';
 
 // 訳しているページなら、メインのボタンを「元のページに戻す」にする（ページ側の部品が無ければ訳していない）。
@@ -29,6 +34,11 @@ for (const button of document.querySelectorAll('[data-show]')) {
 }
 document.getElementById('text').onclick = async () => {
   await send({ type: MSG.OPEN_TEXT });
+  window.close();
+};
+// 手元の PDF ファイル（file:// で開いた PDF を含む）は、PDF翻訳のページでファイルを選んで訳す。
+document.getElementById('pdf-file').onclick = async () => {
+  await chrome.tabs.create({ url: chrome.runtime.getURL('ui/pdf.html') });
   window.close();
 };
 document.getElementById('options').onclick = () => {

@@ -1,6 +1,7 @@
-// テキスト翻訳のページ。入れた文章を、ページの翻訳と同じブラウザー内のモデルで日本語に訳す。
-// 入力が止まって0.8秒たつか、Ctrl+Enter・「翻訳」で訳す。原文の言語はこのページだけの選択（ページの翻訳には効かない）、文体は設定と共有する。
-import { DEFAULTS, fillLanguages } from '../shared/settings.js';
+// テキスト翻訳のページ。入れた文章を、ページの翻訳と同じブラウザー内のモデルで、選んだ言語（既定は日本語）に訳す。
+// 入力が止まって0.8秒たつか、Ctrl+Enter・「翻訳」で訳す。原文と訳文の言語はこのページだけの選択（ページの翻訳は日本語へ訳す）、
+// 文体（です・ます／だ・である）は日本語へ訳すときだけ使い、設定と共有する。
+import { DEFAULTS, fillLanguages, fillTargets } from '../shared/settings.js';
 import { MSG } from '../shared/messages.js';
 
 const $ = (id) => document.getElementById(id);
@@ -8,16 +9,28 @@ const input = $('input');
 const output = $('output');
 const source = $('source');
 const form = $('form');
+const target = $('target');
 const foot = $('foot');
 
 fillLanguages(source, '言語を自動で判定');
+// 入れ替えで日本語が原文になるので、テキスト翻訳の原文の言語には日本語も入れる（自動の次）
+source.add(new Option('日本語', 'ja'), 1);
+fillTargets(target);
 const saved = await chrome.storage.sync.get(DEFAULTS);
 form.value = saved.form;
 // 下書きと原文の言語は、このページの中にだけ残す（タブを閉じても戻せるように）。
 try {
   input.value = localStorage.getItem('draft') ?? '';
   source.value = localStorage.getItem('source') ?? '';
+  target.value = localStorage.getItem('target') ?? 'ja';
 } catch {}
+if (!target.value) target.value = 'ja';
+/** 文体は日本語の訳文にだけある（モデルの form の指定）。 */
+const showForm = () => { $('form-label').hidden = target.value !== 'ja'; };
+showForm();
+/** 入れ替えは原文の言語が決まっているときだけ（自動では入れ替える先の言語が分からない。Androidアプリと同じ）。 */
+const updateSwap = () => { $('swap').disabled = !source.value; };
+updateSwap();
 
 /** 新しい依頼を出すたびに増やす。前の依頼の返事が後から届いても捨てる。 */
 let generation = 0;
@@ -27,7 +40,7 @@ let lastKey = '';
 
 async function translate() {
   const text = input.value.trim();
-  const key = `${source.value}|${form.value}|${text}`;
+  const key = `${source.value}|${target.value}|${form.value}|${text}`;
   if (key === lastKey) return;
   lastKey = key;
   const mine = ++generation;
@@ -40,7 +53,7 @@ async function translate() {
   const t0 = performance.now();
   // stream：Service Workerが訳文の途中と生成したトークン数を0.1秒おきに知らせてくる（下の onMessage）。ほかのテキスト翻訳のタブと混ざらない番号にする。
   stream = `${Date.now()}-${mine}`;
-  const r = await chrome.runtime.sendMessage({ type: MSG.TRANSLATE_ONE, text, source: source.value, lines: true, stream }).catch((e) => ({ ok: false, error: e.message }));
+  const r = await chrome.runtime.sendMessage({ type: MSG.TRANSLATE_ONE, text, source: source.value, target: target.value, lines: true, stream }).catch((e) => ({ ok: false, error: e.message }));
   if (mine !== generation) return;
   stream = '';
   $('notice').textContent = '';
@@ -76,10 +89,33 @@ input.addEventListener('keydown', (e) => {
     translate();
   }
 });
-source.onchange = () => {
+function saveLanguages() {
   try {
     localStorage.setItem('source', source.value);
+    localStorage.setItem('target', target.value);
   } catch {}
+  showForm();
+  updateSwap();
+}
+source.onchange = () => {
+  saveLanguages();
+  translate();
+};
+// 原文と訳文の言語を入れ替え、訳文（まだ無ければ原文）を入力欄へ移して訳す（Androidアプリのテキスト翻訳と同じ）。
+$('swap').onclick = () => {
+  if (!source.value) return;
+  const text = output.classList.contains('placeholder') ? input.value : output.textContent;
+  [source.value, target.value] = [target.value, source.value];
+  saveLanguages();
+  setOutput('訳文がここに出ます', true);
+  input.value = text;
+  input.dispatchEvent(new Event('input'));
+  clearTimeout(timer);
+  lastKey = '';
+  translate();
+};
+target.onchange = () => {
+  saveLanguages();
   translate();
 };
 form.onchange = () => {

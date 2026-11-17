@@ -22,7 +22,11 @@ export async function launch({ port = 9350, extension = EXTENSION, width = 1200,
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'plamo-test-'));
   const proc = spawn(BROWSER, [
     `--user-data-dir=${profile}`, `--remote-debugging-port=${port}`, `--load-extension=${extension}`, `--disable-extensions-except=${extension}`,
-    '--no-first-run', '--no-default-browser-check', `--window-size=${width},${height}`, 'about:blank',
+    '--no-first-run', '--no-default-browser-check', `--window-size=${width},${height}`,
+    // 試験の窓がほかの窓の後ろに隠れても、描画（requestAnimationFrame）とタイマーを止めない。止まると pdf.js がページを
+    // 描き終えず、試験の結果が利用者の画面の使い方に左右された（2026-11-17、PDF翻訳のページの試験で確かめた）
+    '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling',
+    'about:blank',
   ], { stdio: 'ignore', windowsHide: true });
 
   let version;

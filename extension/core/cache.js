@@ -1,6 +1,6 @@
 // 訳文のキャッシュ。同じ文を何度も訳さないために、メモリー（速い）と IndexedDB（Service Workerが止まっても、ブラウザーを閉じても残る）の2段で持つ。
 // Service Workerは数十秒使わないと止まり、メモリーのキャッシュはそのたびに消えるので、IndexedDB に残す。
-// 鍵は「モデル|原文の言語|文体|原文」。IndexedDB は最大 DB_LIMIT 件で、超えたら古く使ったものから消す。設計は docs/03_翻訳コア.md「訳文のキャッシュ」。
+// 鍵は「モデル|原文の言語|訳文の言語|文体|原文」。IndexedDB は最大 DB_LIMIT 件で、超えたら古く使ったものから消す。設計は docs/03_翻訳コア.md「訳文のキャッシュ」。
 
 const MEMORY_LIMIT = 3000;
 const DB_LIMIT = 20000;
@@ -8,7 +8,7 @@ const memory = new Map();
 
 /** キャッシュの鍵。 */
 export function cacheKey(text, options) {
-  return `${options.model}|${options.source ?? 'auto'}|${options.form}|${text}`;
+  return `${options.model}|${options.source ?? 'auto'}|${options.target ?? 'ja'}|${options.form}|${text}`;
 }
 
 function rememberMemory(key, value) {

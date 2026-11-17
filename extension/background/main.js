@@ -10,7 +10,7 @@ import { addLog, clearLogs, logs } from './logs.js';
 import { lastUse, markUse, startIdleCheck } from './idle.js';
 import { buildMenus, fitMenus } from './menus.js';
 import { autoTune, speedTest, stopTune, tuning } from './tune.js';
-import { isViewer, onPageLoaded, openTextPage, pageAction, rememberDocument, rememberPageState, sendToPage, setBadge, switchModel } from './pages.js';
+import { isPdf, isViewer, onPageLoaded, openTextPage, pageAction, rememberDocument, rememberPageState, sendToPage, setBadge, switchModel } from './pages.js';
 
 chrome.runtime.onInstalled.addListener(async ({ reason }) => {
   await migrate(reason);
@@ -152,7 +152,7 @@ const handlers = {
     return { ok: true };
   },
   async [MSG.PAGE_KIND](message) {
-    return { viewer: await isViewer(message.tabId) };
+    return { viewer: await isViewer(message.tabId), pdf: await isPdf(message.tabId) };
   },
   async [MSG.PAGE_STATE](message, sender) {
     await rememberPageState(sender.tab?.id, sender.frameId, message.host, message.mode);

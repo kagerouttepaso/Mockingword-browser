@@ -22,9 +22,11 @@ export async function sendToPage(tabId, message, frameId = 0) {
 
 /**
  * ページの翻訳・表示の切り替え。action：'toggle'（訳す／原文⇄訳文）・'trans'・'orig'・'both'・'stop'（やめて元に戻す）。
- * 内蔵ビューアで表示している文書（PDF など）はページを訳せないので、テキスト翻訳を開く（Alt+T を押して何も起きないのを避ける）。
+ * 内蔵ビューアで表示している文書はページへ差し込めない。PDF はPDF翻訳のページを開き、ほかの文書（画像など）はテキスト翻訳を開く
+ * （Alt+T を押して何も起きないのを避ける）。
  */
 export async function pageAction(tabId, action) {
+  if (await isPdf(tabId)) return openPdfPage(tabId);
   if (await isViewer(tabId)) return openTextPage();
   if (action === 'stop') return sendToPage(tabId, { type: MSG.STOP });
   if (action === 'toggle') return sendToPage(tabId, { type: MSG.TOGGLE, mode: (await settings()).mode });
@@ -54,6 +56,17 @@ export async function openTextPage(text) {
   }
 }
 
+/**
+ * タブで開いている PDF を、PDF翻訳のページ（ui/pdf.html）で開き直す。隣のタブに開く。
+ * file:// の PDF は、利用者が拡張機能の「ファイルの URL へのアクセスを許可」をオンにしたときだけ判定でき、読み込める。
+ */
+export async function openPdfPage(tabId) {
+  const tab = await chrome.tabs.get(tabId);
+  if (!/^(https?|file):/.test(tab.url ?? '')) return chrome.tabs.create({ url: chrome.runtime.getURL('ui/pdf.html'), index: tab.index + 1 });
+  const url = chrome.runtime.getURL('ui/pdf.html') + '?src=' + encodeURIComponent(tab.url);
+  return chrome.tabs.create({ url, index: tab.index + 1, openerTabId: tabId });
+}
+
 /** 訳し終えていない段落の数をボタンに出す。0 なら消す。 */
 export function setBadge(tabId, pending) {
   if (tabId == null) return;
@@ -72,7 +85,13 @@ const viewerKey = (tabId) => 'viewer:' + tabId;
 export async function rememberDocument(tabId, frameId, contentType) {
   if (tabId == null || frameId !== 0) return;
   if (pageReadable(contentType)) await chrome.storage.session.remove(viewerKey(tabId));
-  else await chrome.storage.session.set({ [viewerKey(tabId)]: true });
+  else await chrome.storage.session.set({ [viewerKey(tabId)]: contentType });
+}
+
+/** タブが内蔵ビューアで表示している PDF か。 */
+export async function isPdf(tabId) {
+  if (tabId == null) return false;
+  return (await chrome.storage.session.get(viewerKey(tabId)))[viewerKey(tabId)] === 'application/pdf';
 }
 
 /** タブが内蔵ビューアで表示している文書（PDF など）か。 */

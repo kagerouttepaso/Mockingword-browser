@@ -23,7 +23,7 @@ export const MSG = {
   PAGE_ACTION: 'page-action', // { tabId, action: 'toggle'|'trans'|'orig'|'both'|'stop' }
   SWITCH_MODEL: 'switch-model', // { model, tabId }
   OPEN_TEXT: 'open-text',
-  PAGE_KIND: 'page-kind', // { tabId } → { viewer }：内蔵ビューアで表示している文書（PDF など）か
+  PAGE_KIND: 'page-kind', // { tabId } → { viewer, pdf }：内蔵ビューアで表示している文書（PDF など）か、そのうち PDF か
   CACHE_CLEAR: 'cache-clear',
   CACHE_STATS: 'cache-stats', // → { count, bytes, limit, usage }
   LOGS_GET: 'logs-get',

@@ -8,7 +8,7 @@ manifest = json.loads((extension / 'manifest.json').read_text('utf-8'))
 if manifest['version'] != json.loads((root / 'package.json').read_text('utf-8'))['version']:
     raise SystemExit('manifest.jsonとpackage.jsonの版が一致しません')
 allowed = {'background': {'.js'}, 'core': {'.js'}, 'offscreen': {'.js', '.html'},
-           'page': {'.js', '.css'}, 'shared': {'.js', '.css'}, 'ui': {'.js', '.css', '.html'},
+           'page': {'.js', '.css'}, 'pdf': {'.js'}, 'shared': {'.js', '.css'}, 'ui': {'.js', '.css', '.html'},
            'icons': {'.png'}, 'licenses': {'.txt'}}
 files = []
 for item in sorted(extension.rglob('*')):
@@ -16,7 +16,9 @@ for item in sorted(extension.rglob('*')):
     if not item.is_file(): continue
     rel = item.relative_to(extension)
     if rel.as_posix() == 'vendor/wllama/README.md': continue
-    if rel.as_posix() in ('manifest.json', 'vendor/wllama/index.js', 'vendor/wllama/wasm/wllama.wasm'):
+    if rel.as_posix() in ('manifest.json', 'vendor/wllama/index.js', 'vendor/wllama/wasm/wllama.wasm',
+                          'vendor/pdfium/pdfium.js', 'vendor/pdfium/pdfium.wasm', 'vendor/pdf-lib/pdf-lib.esm.min.js', 'vendor/harfbuzz/harfbuzz-subset.wasm',
+                          'vendor/pdfjs/pdf.min.mjs', 'vendor/pdfjs/pdf.worker.min.mjs', 'vendor/pdfjs/pdf_viewer.mjs', 'vendor/pdfjs/pdf_viewer.css'):
         files.append(item); continue
     if len(rel.parts) != 2 or rel.parts[0] not in allowed or item.suffix not in allowed[rel.parts[0]]:
         raise SystemExit(f'未確認のファイルがextensionにあります: {rel}')

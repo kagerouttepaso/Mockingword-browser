@@ -12,6 +12,8 @@ button:hover:not(:disabled){background:color-mix(in srgb,var(--mw-on-surface-var
 button:disabled{opacity:.5;cursor:default}
 button.primary{background:var(--mw-primary);border-color:var(--mw-primary);color:var(--mw-on-primary)}
 button.primary:hover:not(:disabled){background:var(--mw-primary);color:var(--mw-on-primary);filter:brightness(.94)}
+button.tonal{background:var(--mw-secondary-container);border-color:var(--mw-secondary-container);color:var(--mw-on-secondary-container)}
+button.tonal:hover:not(:disabled){background:var(--mw-secondary-container);color:var(--mw-on-secondary-container);filter:brightness(.95)}
 button:focus-visible,select:focus-visible,textarea:focus-visible,a:focus-visible,input:focus-visible{outline:2px solid var(--mw-primary);outline-offset:3px}
 input[type=checkbox],input[type=radio]{accent-color:var(--mw-primary)}
 a{color:var(--mw-primary)}

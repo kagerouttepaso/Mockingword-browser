@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../extension');
-const LAYERS = ['shared', 'core', 'background', 'offscreen', 'page', 'ui'];
+const LAYERS = ['shared', 'core', 'background', 'offscreen', 'page', 'pdf', 'ui'];
 /** 層ごとに読み込んでよい層（vendor は同梱の外部ライブラリ）。 */
 const ALLOWED = {
   shared: ['shared'],
@@ -16,7 +16,8 @@ const ALLOWED = {
   background: ['background', 'core', 'shared'],
   offscreen: ['offscreen', 'shared', 'vendor'],
   page: ['page', 'shared'],
-  ui: ['ui', 'shared'],
+  pdf: ['pdf', 'shared', 'vendor'],
+  ui: ['ui', 'shared', 'pdf', 'vendor'],
 };
 /** DOM にも chrome にも触れない純粋な関数だけを置くモジュール（Node の単体試験で確かめられる形を保つ）。 */
 const PURE = ['shared/markup.js', 'shared/text.js', 'shared/prompt.js'];

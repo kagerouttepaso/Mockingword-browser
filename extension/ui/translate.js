@@ -13,6 +13,8 @@ const target = $('target');
 const foot = $('foot');
 
 fillLanguages(source, '言語を自動で判定');
+// 入れ替えで日本語が原文になるので、テキスト翻訳の原文の言語には日本語も入れる（自動の次）
+source.add(new Option('日本語', 'ja'), 1);
 fillTargets(target);
 const saved = await chrome.storage.sync.get(DEFAULTS);
 form.value = saved.form;
@@ -26,6 +28,9 @@ if (!target.value) target.value = 'ja';
 /** 文体は日本語の訳文にだけある（モデルの form の指定）。 */
 const showForm = () => { $('form-label').hidden = target.value !== 'ja'; };
 showForm();
+/** 入れ替えは原文の言語が決まっているときだけ（自動では入れ替える先の言語が分からない。Androidアプリと同じ）。 */
+const updateSwap = () => { $('swap').disabled = !source.value; };
+updateSwap();
 
 /** 新しい依頼を出すたびに増やす。前の依頼の返事が後から届いても捨てる。 */
 let generation = 0;
@@ -84,17 +89,33 @@ input.addEventListener('keydown', (e) => {
     translate();
   }
 });
-source.onchange = () => {
+function saveLanguages() {
   try {
     localStorage.setItem('source', source.value);
-  } catch {}
-  translate();
-};
-target.onchange = () => {
-  try {
     localStorage.setItem('target', target.value);
   } catch {}
   showForm();
+  updateSwap();
+}
+source.onchange = () => {
+  saveLanguages();
+  translate();
+};
+// 原文と訳文の言語を入れ替え、訳文（まだ無ければ原文）を入力欄へ移して訳す（Androidアプリのテキスト翻訳と同じ）。
+$('swap').onclick = () => {
+  if (!source.value) return;
+  const text = output.classList.contains('placeholder') ? input.value : output.textContent;
+  [source.value, target.value] = [target.value, source.value];
+  saveLanguages();
+  setOutput('訳文がここに出ます', true);
+  input.value = text;
+  input.dispatchEvent(new Event('input'));
+  clearTimeout(timer);
+  lastKey = '';
+  translate();
+};
+target.onchange = () => {
+  saveLanguages();
   translate();
 };
 form.onchange = () => {

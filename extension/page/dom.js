@@ -13,9 +13,11 @@ export const UI = '.plamo-tr, .plamo-ui, .plamo-ui-host';
 export const OWN = UI + ', [data-plamo-orig]';
 
 const displayCache = new WeakMap();
+const LIST_ENTRY = new Set(['LI', 'DT', 'DD']);
 
-/** 行の中に並ぶ要素か（段落の区切りにならない）。inline-block（ボタンなど）は独立した段落として訳す。 */
+/** 段落の区切りにならないインライン要素か。一覧の項目は横並びでも独立して扱う。 */
 export function isInline(el) {
+  if (LIST_ENTRY.has(el.tagName)) return false;
   let d = displayCache.get(el);
   if (d === undefined) {
     d = getComputedStyle(el).display;
@@ -42,7 +44,7 @@ export function skipElement(el) {
 const INLINE_CODE = new Set(['CODE', 'KBD', 'SAMP', 'VAR']);
 export const isInlineCode = (el) => el.namespaceURI === XHTML && INLINE_CODE.has(el.tagName) && !el.closest('pre') && isInline(el);
 
-/** 要素から、見た目の段落（行の中に並ぶ要素を除いた、いちばん近いブロック要素）までさかのぼる。 */
+/** 要素から、いちばん近いブロック要素または一覧の項目までさかのぼる。 */
 export function blockOf(el) {
   while (el.parentElement && isInline(el)) el = el.parentElement;
   return el;

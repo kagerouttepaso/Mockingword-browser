@@ -1,15 +1,14 @@
-export function installUxRecorder() {
+export function installUxRecorder(adapter) {
   const boundary = 'body, main, article, section, header, footer, nav, aside, div, p, h1, h2, h3, h4, h5, h6, [role=heading], li, dt, dd, th, td, blockquote, figcaption, caption, summary, button, label, [role=menuitem], [role=tab]';
   const excluded = 'script, style, template, noscript, svg, math, pre, code, kbd, samp, textarea, select, input, [contenteditable=true]';
   const excludedOriginal = new WeakSet(document.querySelectorAll('[translate=no]'));
-  const hiddenOriginal = '[data-plamo-orig=done], [data-plamo-hide]';
   const heading = 'h1, h2, h3, h4, h5, h6, [role=heading]';
   const main = 'main, article, [role=main]';
   const navigation = 'nav, aside, footer, [role=navigation], [role=menu]';
   const norm = (value) => value.replace(/\s+/gu, ' ').trim();
   const kana = /[\u3041-\u3096\u30a1-\u30fa]/u;
-  const japanese = /[\u3041-\u3096\u30a1-\u30fa\u3400-\u9fff]/u;
   const sourceLanguage = /\p{Script=Latin}{2,}|\p{Script=Hangul}{2,}/u;
+  const sourceLetter = /\p{Script=Latin}|\p{Script=Hangul}/u;
   const now = () => performance.timeOrigin + performance.now();
   const blocks = [...document.querySelectorAll(boundary)];
   const originalBlocks = new WeakSet(blocks);
@@ -18,7 +17,8 @@ export function installUxRecorder() {
 
   function collectGroups(element, translated) {
     const groups = new Map();
-    if (!element.isConnected || element.closest(excluded) || (translated && element.closest(hiddenOriginal))) return groups;
+    const hiddenOriginal = translated && adapter.original;
+    if (!element.isConnected || element.closest(excluded) || (hiddenOriginal && element.closest(hiddenOriginal))) return groups;
     for (let ancestor = element; ancestor; ancestor = ancestor.parentElement) {
       if (excludedOriginal.has(ancestor)) return groups;
     }
@@ -32,7 +32,7 @@ export function installUxRecorder() {
             nodes = [];
             groups.set(child, nodes);
           } else if (!child.matches(boundary) && !child.matches(excluded) && !excludedOriginal.has(child)
-            && !(translated && child.matches(hiddenOriginal))) scan(child);
+            && !(hiddenOriginal && child.matches(hiddenOriginal))) scan(child);
         }
       }
     }
@@ -81,11 +81,11 @@ export function installUxRecorder() {
           const disclosure = node.parentElement.closest('details:not([open])');
           return disclosure && !disclosure.querySelector(':scope > summary')?.contains(node);
         }), rendered: source, completeAt: null, firstAt: null, afterScroll: false };
-      const fragments = nodes.map((node) => ({ node, text: norm(node.data) })).filter(({ text }) =>
-        (text.match(/\p{Script=Latin}{2,}/gu)?.length ?? 0) >= 3 || (text.match(/\p{Script=Hangul}/gu)?.length ?? 0) >= 4);
+      const sourceFragments = nodes.filter((node) => sourceLetter.test(node.data));
+      const fragments = sourceFragments.filter((node) => !node.parentElement.closest('.notranslate'));
       inventory.push(row);
       if (!entries.has(element)) entries.set(element, []);
-      entries.get(element).push({ row, fragments, anchor });
+      entries.get(element).push({ row, fragments, anchor, notranslate: sourceFragments.length - fragments.length });
     }
   }
 
@@ -94,15 +94,20 @@ export function installUxRecorder() {
     charset: document.characterSet, title: document.title, height: document.documentElement.scrollHeight };
   const initialScreen = inventory.filter((row) => row.initial === 'viewport');
   const events = [];
+  const waiting = new Set();
+  let framePending = false;
   let startAt = null;
   let scroll = null;
   let scrollAttempted = false;
-  function updateRow({ row, fragments }, nodes, at) {
-    const rendered = readText(nodes);
-    const current = new Set(nodes);
-    row.rendered = rendered;
-    row.remaining = fragments.filter(({ node, text }) => current.has(node) && norm(node.data) === text).map(({ text }) => text);
-    const complete = rendered !== row.source && japanese.test(rendered) && !row.remaining.length;
+  function updateRow({ row, fragments, notranslate }, nodes, at) {
+    row.rendered = readText(nodes);
+    const evidence = fragments.map((node) => node.isConnected ? adapter.inspect(node) : { marked: false, applied: false });
+    const applied = evidence.filter((entry) => entry.applied).length;
+    const marked = evidence.filter((entry) => entry.marked).length;
+    const output = adapter.hasOutput(nodes);
+    const complete = applied > 0 && applied === fragments.length;
+    row.evidence = { applied, marked, total: fragments.length, notranslate, output };
+    if (output && applied < marked) row.firstUnconfirmedPaintAt ??= at;
     if (complete !== (row.completeAt !== null)) {
       row.completeAt = complete ? at : null;
       if (complete) row.firstAt ??= at;
@@ -111,7 +116,24 @@ export function installUxRecorder() {
   }
   function update(element, at) {
     const groups = collectGroups(element, true);
-    for (const entry of entries.get(element)) updateRow(entry, groups.get(entry.anchor) ?? [], at);
+    let provisional = false;
+    for (const entry of entries.get(element)) {
+      updateRow(entry, groups.get(entry.anchor) ?? [], at);
+      const { applied, marked } = entry.row.evidence;
+      provisional ||= applied < marked;
+    }
+    if (!adapter.checkAfterPaint) return;
+    if (provisional) waiting.add(element);
+    else waiting.delete(element);
+    if (waiting.size && !framePending) {
+      framePending = true;
+      requestAnimationFrame(() => {
+        framePending = false;
+        const at = now();
+        for (const candidate of waiting) update(candidate, at);
+        tryScroll();
+      });
+    }
   }
   function tryScroll() {
     if (scrollAttempted || !initialScreen.length || initialScreen.some((row) => row.completeAt === null)) return;
@@ -126,13 +148,17 @@ export function installUxRecorder() {
       for (const { row, anchor } of records) row.afterScroll = visibility(groups.get(anchor) ?? []) === 'viewport';
     }
   }
-  const observer = new MutationObserver((records) => {
+  function observe(records) {
     if (startAt === null) return;
+    adapter.observe?.(records);
     const affected = new Set();
     const at = now();
     for (const record of records) {
       let element = record.target.nodeType === Node.ELEMENT_NODE ? record.target : record.target.parentElement;
       for (; element; element = element.parentElement) if (entries.has(element)) affected.add(element);
+      if (record.type === 'attributes') {
+        for (const nested of record.target.querySelectorAll(boundary)) if (entries.has(nested)) affected.add(nested);
+      }
       for (const removed of record.removedNodes) {
         if (removed.nodeType !== Node.ELEMENT_NODE || removed.isConnected) continue;
         if (entries.has(removed)) affected.add(removed);
@@ -141,12 +167,15 @@ export function installUxRecorder() {
     }
     for (const element of affected) update(element, at);
     tryScroll();
-  });
+  }
+  const observer = new MutationObserver(observe);
   observer.observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true,
-    attributeFilter: ['data-plamo-orig', 'data-plamo-hide'] });
+    attributeFilter: adapter.attributes, attributeOldValue: true });
   window.__uxReplay = {
     start: () => (startAt = now()),
     snapshot() {
+      const pending = observer.takeRecords();
+      if (pending.length) observe(pending);
       const at = now();
       if (startAt !== null) for (const element of entries.keys()) update(element, at);
       return { metadata, startAt, observedAt: at, scroll, inventory, events };

@@ -10,14 +10,14 @@ import { readMhtml } from '../lib/mhtml.mjs';
 import { openReplayPage, readMockingwordPairs } from '../lib/replay-page.mjs';
 import { qualityStats } from './replay-quality.mjs';
 import { installUxRecorder } from './replay-ux-dom.mjs';
-import { analyzeUx, dispatchDiagnostics, median, uxMetricKeys } from './replay-ux-analysis.mjs';
+import { mockingwordObservation, sakuttoObservation } from './replay-ux-observation.mjs';
+import { analyzeUx, dispatchDiagnostics, summarizeUxRuns, unchangedUxItems } from './replay-ux-analysis.mjs';
 import { browserStatus, launchUx, prepareMockVariant, prepareSakutto, prepareUxModels, setupUx, startUxTranslation } from './replay-ux-adapters.mjs';
 
 const source = fileURLToPath(new URL('../../extension/', import.meta.url));
 const files = { github: 'github-typescript-9998.mhtml', mdn: 'mdn-gpuadapter.mhtml', w3c: 'w3c-proposal.mhtml', wikipedia: 'wikipedia-ko.mhtml' };
 const variantNames = ['default', 'a', 'b', 'ab', 'sakutto'];
 const legacy = { width: 1200, height: 800 };
-const install = `(${installUxRecorder.toString()})()`;
 const snapshot = 'window.__uxReplay.snapshot()';
 const json = (file, value) => fs.writeFileSync(file, JSON.stringify(value, null, 2) + '\n');
 const hash = (value) => createHash('sha256').update(value).digest('hex');
@@ -35,7 +35,18 @@ function positive(value, title) {
   return Number(value);
 }
 
-async function openUxPage(browser, testCase, onConsole) {
+async function mockingwordContext(browser, page) {
+  const contextId = await browser.waitFor(async () => {
+    for (const context of page.contexts.values()) {
+      if (context.auxData?.type !== 'isolated' || context.auxData.frameId !== page.frameId) continue;
+      if (await browser.eval(page.session, `globalThis.chrome?.runtime?.id === ${JSON.stringify(browser.extensionId)}`, context.id)) return context.id;
+    }
+  }, 3000, 50);
+  if (!contextId) throw new Error('Mockingword のコンテンツスクリプトの状態を読み取れません');
+  return contextId;
+}
+
+async function openUxPage(browser, testCase, adapter, onConsole, readMockingwordState = false) {
   const page = await openReplayPage(browser, testCase.fixture, { viewport: testCase.viewport, onConsole });
   try {
     const window = await browser.send('Browser.getWindowForTarget', { targetId: page.targetId });
@@ -46,11 +57,15 @@ async function openUxPage(browser, testCase, onConsole) {
     const bounds = (await browser.send('Browser.getWindowBounds', { windowId: window.windowId })).bounds;
     if (!testCase.viewport && bounds.windowState !== 'maximized') throw new Error('ブラウザーを最大化できません');
     await browser.eval(page.session, 'scrollTo({top:0, left:0, behavior:"instant"})');
-    const inventory = await browser.eval(page.session, install);
+    const contextId = readMockingwordState ? await mockingwordContext(browser, page) : undefined;
+    const state = readMockingwordState ? `(await import(chrome.runtime.getURL('page/state.js'))).state` : '';
+    const inventory = await browser.eval(page.session,
+      `(async () => (${installUxRecorder.toString()})((${adapter.toString()})(${state})))()`, contextId);
     if (!inventory.total || !inventory.screen) throw new Error('訳す対象が無いか、初期画面に収まっていません');
-    const [width, height] = inventory.metadata.viewport;
-    if (testCase.viewport && (width !== testCase.viewport.width || height !== testCase.viewport.height)) throw new Error('指定したビューポートと一致しません');
-    return { ...page, inventory, bounds };
+    const actual = inventory.metadata.viewport.join('x');
+    const expected = testCase.viewport ? `${testCase.viewport.width}x${testCase.viewport.height}` : testCase.maxViewport;
+    if (expected && actual !== expected) throw new Error(`ビューポートが指定と一致しません：${actual}（指定：${expected}）`);
+    return { ...page, inventory, bounds, contextId };
   } catch (error) {
     await page.close();
     throw error;
@@ -79,7 +94,9 @@ async function measure(testCase, variant, models, parallel, timeoutMs) {
       await message(browser, { type: 'logs-clear' });
     }
     const consoles = [];
-    const page = await openUxPage(browser, testCase, (entry) => { if (entry.text.startsWith(LOG_TAG)) consoles.push(entry); });
+    const adapter = variant.sakutto ? sakuttoObservation : mockingwordObservation;
+    const page = await openUxPage(browser, testCase, adapter,
+      (entry) => { if (entry.text.startsWith(LOG_TAG)) consoles.push(entry); }, !variant.sakutto);
     try {
       await startUxTranslation(browser, variant, page);
       const native = await browser.waitFor(async () => variant.sakutto
@@ -89,7 +106,7 @@ async function measure(testCase, variant, models, parallel, timeoutMs) {
         })()`)
         : consoles.find((entry) => entry.text.includes('全体の訳し終わり')), timeoutMs, 80);
       await sleep(350);
-      const record = await browser.eval(page.session, snapshot);
+      const record = await browser.eval(page.session, snapshot, page.contextId);
       const ux = analyzeUx(record);
       const traces = variant.sakutto ? [] : (await message(browser, { type: 'logs-get' })).logs;
       if (!variant.sakutto && (!traces.some((event) => event.event === '送信対象選択') || !traces.some((event) => event.acquiredAt))) {
@@ -103,21 +120,12 @@ async function measure(testCase, variant, models, parallel, timeoutMs) {
       return { case: testCase.id, variant: variant.name, ratio: variant.ratio, limits: variant.limits, fixtureSha256: testCase.sha256,
         inventorySha256: signature(record), version, extensionVersion: variant.version, gpu, model: model.snapshot(), status, finalStatus, bounds: page.bounds,
         wallMs: Date.now() - launchedAt, native: native || null, record, ux, traces,
-        run: { totalMs: ux.totalMs, pairs }, quality: variant.sakutto ? null : qualityStats(nativePairs, traces),
+        run: { totalMs: ux.totalMs, pairs }, quality: { unchanged: unchangedUxItems(record.inventory),
+          unmapped: record.inventory.filter((row) => row.completeAt !== null && !row.evidence.output).map(({ id, tag, source }) => ({ id, tag, source })),
+          mockingword: variant.sakutto ? null : qualityStats(nativePairs, traces) },
         dispatch: variant.sakutto ? null : dispatchDiagnostics(traces, record.startAt, record.observedAt, status.parallel) };
     } finally { await page.close(); }
   } finally { await browser.close(); }
-}
-
-function summarize(results) {
-  return Object.fromEntries(Object.entries(results).map(([name, runs]) => [name, {
-    rounds: runs.length, nativeCompleted: runs.filter((run) => run.native).length,
-    coverage: runs.map((run) => run.ux.counts.all),
-    ms: Object.fromEntries(uxMetricKeys.map((key) => [key, {
-      reached: runs.filter((run) => run.ux[key] !== null).length, median: median(runs.map((run) => run.ux[key])),
-    }])),
-    quality: runs.map((run) => run.quality), wallMedianMs: median(runs.map((run) => run.wallMs)),
-  }]));
 }
 
 export async function runUxReplay(args) {
@@ -125,7 +133,8 @@ export async function runUxReplay(args) {
     fixtures: { type: 'string' }, out: { type: 'string' }, pages: { type: 'string' }, variants: { type: 'string' },
     rounds: { type: 'string', default: '5' }, parallel: { type: 'string', default: '8' }, timeout: { type: 'string', default: '180' },
     sakutto: { type: 'string' }, 'sakutto-model': { type: 'string' }, inventory: { type: 'boolean' },
-    'max-only': { type: 'boolean' },
+    'max-only': { type: 'boolean' }, 'max-viewport': { type: 'string' },
+    'extra-parallel': { type: 'string' }, 'extra-parallel-pages': { type: 'string' },
   } });
   if (!values.fixtures || !values.out) throw new Error('--fixtures と --out を指定してください（docs/13_ページ翻訳のUX計測.md）');
   const names = values.inventory ? [] : pickList(values.variants, variantNames, '条件');
@@ -133,13 +142,19 @@ export async function runUxReplay(args) {
   if (includesSakutto && (!values.sakutto || !values['sakutto-model'])) throw new Error('sakutto の条件では --sakutto と --sakutto-model が必要です');
   const rounds = positive(values.rounds, '回数');
   const parallel = positive(values.parallel, '同時実行数');
+  const extraParallel = values['extra-parallel'] ? positive(values['extra-parallel'], '追加の同時実行数') : null;
+  const extraPages = values['extra-parallel-pages'] ? pickList(values['extra-parallel-pages'], Object.keys(files), '追加条件のページ') : [];
+  const maxViewport = values['max-viewport'];
+  if (maxViewport && !/^[1-9]\d*x[1-9]\d*$/.test(maxViewport)) throw new Error('--max-viewport は幅x高さで指定してください');
+  if (extraParallel !== null && (!extraPages.length || !names.includes('default') || extraParallel === parallel)
+    || extraPages.length && extraParallel === null) throw new Error('追加条件には default と、異なる同時実行数、対象ページを指定してください');
   const timeoutMs = positive(values.timeout, '制限時間（秒）') * 1000;
   const cases = pickList(values.pages, Object.keys(files), 'ページ').flatMap((id) => {
     const file = path.join(values.fixtures, files[id]);
     const fixture = readMhtml(file);
     const sha256 = hash(fs.readFileSync(file));
     if (!fixture.parts.has(fixture.main)) throw new Error(`${files[id]} のページ本文がありません`);
-    const main = { id, fixture, sha256, viewport: null };
+    const main = { id, fixture, sha256, viewport: null, maxViewport };
     return id === 'github' && !values['max-only'] ? [main, { ...main, id: 'github-1200x800', viewport: legacy }] : [main];
   });
   const out = path.resolve(values.out);
@@ -149,7 +164,7 @@ export async function runUxReplay(args) {
     const browser = await launchUx({ extension: source });
     try {
       for (const testCase of cases) {
-        const page = await openUxPage(browser, testCase);
+        const page = await openUxPage(browser, testCase, mockingwordObservation);
         try {
           const record = await browser.eval(page.session, snapshot);
           json(path.join(out, `${testCase.id}.json`), { fixtureSha256: testCase.sha256, bounds: page.bounds, ...page.inventory, record });
@@ -161,28 +176,31 @@ export async function runUxReplay(args) {
   }
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mockingword-ux-'));
   try {
-    const variants = names.map((name) => name === 'sakutto' ? prepareSakutto(values.sakutto)
+    const baseVariants = names.map((name) => name === 'sakutto' ? prepareSakutto(values.sakutto)
       : prepareMockVariant(source, name, tempRoot));
     const models = await prepareUxModels({ mock: names.some((name) => name !== 'sakutto'), source,
       sakuttoFile: includesSakutto ? values['sakutto-model'] : null });
     const suite = {};
     for (const testCase of cases) {
-      const results = Object.fromEntries(names.map((name) => [name, []]));
+      const variants = [...baseVariants];
+      if (extraPages.includes(testCase.id)) variants.push({ ...baseVariants.find((variant) => variant.name === 'default'),
+        name: `default-${extraParallel}`, parallel: extraParallel });
+      const results = Object.fromEntries(variants.map(({ name }) => [name, []]));
       let expected;
       for (let round = 0; round < rounds; round++) {
         for (let index = 0; index < variants.length; index++) {
           const variant = variants[(index + round) % variants.length];
           console.log(`${testCase.id} ${variant.name} ${round + 1}/${rounds}回目を開始`);
-          const result = await measure(testCase, variant, models, parallel, timeoutMs);
+          const result = await measure(testCase, variant, models, variant.parallel ?? parallel, timeoutMs);
           json(path.join(out, `${testCase.id}-${variant.name}-${round + 1}.json`), result);
           expected ??= result.inventorySha256;
           if (result.inventorySha256 !== expected) throw new Error(`${testCase.id} の画面設定または分母が一致しません。原始結果を確認してください`);
           results[variant.name].push(result);
           const { all } = result.ux.counts;
-          console.log(`  画面内 ${fmt(result.ux.initialViewportMs)}・スクロール後 ${fmt(result.ux.scrollFollowMs)}・全体 ${fmt(result.ux.totalMs)}・網羅 ${all.translated}/${all.total}${result.native ? '' : '・拡張の終了通知なし'}`);
+          console.log(`  画面内 ${fmt(result.ux.initialViewportMs)}・スクロール後 ${fmt(result.ux.scrollFollowMs)}・全体 ${fmt(result.ux.totalMs)}・網羅 ${all.translated}/${all.total}・原文と同じ ${result.quality.unchanged.count}件${result.native ? '' : '・拡張の終了通知なし'}`);
         }
       }
-      suite[testCase.id] = summarize(results);
+      suite[testCase.id] = summarizeUxRuns(results);
       json(path.join(out, 'summary.json'), suite);
     }
   } finally {

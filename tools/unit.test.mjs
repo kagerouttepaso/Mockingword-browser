@@ -27,22 +27,27 @@ test('UX の完了時刻と網羅率は非表示とスクロール時の対象�
     { ms: 0, translated: 0 }, { ms: 10, translated: 1 }, { ms: 25, translated: 2 },
     { ms: 47, translated: 3 }, { ms: 80, translated: 3 },
   ]);
-  assert.deepEqual(result.unchanged, [4]);
+  assert.deepEqual(result.incomplete, [4]);
   assert.equal(median([10, null, 20]), 15);
 });
 
 test('生成枠の占有は枠の取得・解放で数え、受信待ち時間とは分ける', () => {
   const traces = [
     { source: LOG_SOURCE.model, event: '生成', startAt: 101, acquiredAt: 104, releasedAt: 110 },
-    { source: LOG_SOURCE.model, event: '生成', startAt: 105, acquiredAt: 108, releasedAt: 114 },
+    { source: LOG_SOURCE.model, event: '生成', requestId: 'page:3', startAt: 105, acquiredAt: 108, releasedAt: 114, genMs: 4 },
     { event: '受信', id: 1, pageAt: 111, pagePending: 2 },
     { event: '送信対象選択', selectedAt: 112, ms: 0.25, pending: 2, selected: 1 },
-    { event: '送信', id: 3, pageAt: 113 },
+    { event: '送信', id: 3, pageAt: 105, lines: 5, screen: 4 },
+    { event: '送信', id: 4, pageAt: 113 },
     { event: '受信', id: 2, pageAt: 115, pagePending: 1 },
+    { event: '受信', id: 3, pageAt: 116, ms: 11, pagePending: 0 },
   ];
   const result = dispatchDiagnostics(traces, 100, 120, 2);
   assert.deepEqual(result.occupancy, [[0, 0], [4, 1], [8, 2], [10, 1], [14, 0]]);
   assert.deepEqual(result.byCount, { 0: 10, 1: 8, 2: 2 });
+  assert.deepEqual(result.requests[0], { id: 3, sentMs: 5, lines: 5, screen: 4,
+    replies: [{ atMs: 16, elapsedMs: 11, outcome: '受信' }],
+    generations: [{ acquiredMs: 8, releasedMs: 14, genMs: 4, outcome: '生成' }] });
   assert.deepEqual(result.replyToNextSend.map((reply) => reply.gapMs), [2, null]);
   assert.deepEqual(result.selection, [{ at: 12, ms: 0.25, pending: 2, selected: 1 }]);
 });

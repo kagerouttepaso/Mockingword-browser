@@ -116,7 +116,7 @@ export async function browserStatus(browser, variant, parallel) {
 }
 
 export async function startUxTranslation(browser, variant, page) {
-  const start = () => browser.eval(page.session, 'window.__uxReplay.start()');
+  const start = () => browser.eval(page.session, 'window.__uxReplay.start()', page.contextId);
   if (!variant.sakutto) {
     await start();
     const result = await message(browser, { type: 'page-action', tabId: page.tabId, action: 'trans' });

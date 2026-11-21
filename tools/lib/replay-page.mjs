@@ -3,8 +3,12 @@ import { sleep, tabIdOf } from './browser.mjs';
 
 export async function openReplayPage(browser, fixture, { viewport, readyDelay, onConsole = () => {} } = {}) {
   const { targetId, session } = await browser.open('about:blank', 0);
+  const contexts = new Map();
   const stopListening = browser.on((event) => {
     if (event.sessionId !== session) return;
+    if (event.method === 'Runtime.executionContextCreated') contexts.set(event.params.context.id, event.params.context);
+    if (event.method === 'Runtime.executionContextDestroyed') contexts.delete(event.params.executionContextId);
+    if (event.method === 'Runtime.executionContextsCleared') contexts.clear();
     if (event.method === 'Runtime.consoleAPICalled') {
       onConsole({ t: event.params.timestamp, text: event.params.args.map((arg) => arg.value ?? '').join(' ') });
     }
@@ -34,7 +38,7 @@ export async function openReplayPage(browser, fixture, { viewport, readyDelay, o
       await browser.eval(session, 'Promise.race([document.fonts.ready, new Promise(resolve => setTimeout(resolve, 2500))]).then(() => true)');
     }
     const tabId = await tabIdOf(browser, targetId);
-    return { targetId, session, tabId, close };
+    return { targetId, session, tabId, close, contexts, frameId: navigation.frameId };
   } catch (error) {
     await close();
     throw error;

@@ -10,7 +10,7 @@ import { OWN } from './dom.js';
 import { markup } from './paragraph.js';
 import { cancelStale, enqueue, pump, report, resetMeasure, showPartial } from './queue.js';
 import { log, notify, state, trace } from './state.js';
-import { apply, removeAll, setModeClass, showingTranslation } from './write.js';
+import { apply, clearPartial, removeAll, setModeClass, setWorking, showingTranslation } from './write.js';
 
 // ---------------- 表示の切り替え ----------------
 
@@ -72,7 +72,9 @@ function retranslate(model) {
   state.cache.clear();
   state.pending.clear();
   const again = [];
+  setWorking(state.all, false);
   for (const para of state.all) {
+    clearPartial(para);
     if (!para.nodes.some((n) => n.isConnected)) {
       state.all.delete(para);
       continue;
@@ -200,6 +202,7 @@ function observe() {
       for (const para of changed) {
         const { text, plain, marks, hide, root } = markup(para.element, para.nodes.filter((n) => n.isConnected));
         if (text !== para.text && worthTranslating(plain) && (para.changes = (para.changes ?? 0) + 1) <= MAX_CHANGES) {
+          clearPartial(para);
           Object.assign(para, { text, marks, hide, root });
           added.push(para);
         }

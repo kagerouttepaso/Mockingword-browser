@@ -11,8 +11,10 @@
 //   { type: 'void', id, br }             文字の無い要素（<br>・アイコン・画像）
 // マーカー：要素 <a1>…</a1>、写す要素 <c1>…</c1>、文字の無い要素 <v1/>。番号は段落の中の要素の番号（id）。
 
+import { sentenceEnds } from './sentences.js';
+
 /** マーカー1つ（開き・閉じ・空要素）。訳文・原文からマーカーを取り除くときに使う。 */
-export const MARK_TAG = /<\/?[acv]\d+\/?>/g;
+export const MARK_TAG = /<(\/?)([acv])(\d+)\/?>/g;
 
 /** 訳文の中のマーカー。写す要素は中身ごと1つとして読む（モデルが中身を書き換えても、元の要素を写す）。 */
 const TOKEN = /<c(\d+)>[\s\S]*?<\/c\1>|<(\/?)([av])(\d+)\/?>/g;
@@ -123,4 +125,73 @@ export function decode(translation, kinds) {
   text(translation.slice(last));
   unwrapFrom(1);
   return top.children;
+}
+
+/** 生成中の1行から、表示できるマーカー付き文字列を返す。書きかけの行は文末までに切る。 */
+export function previewLine(line, complete = false) {
+  let prose = '';
+  let cursor = 0;
+  const offsets = [];
+  const append = (end) => {
+    prose += line.slice(cursor, end);
+    for (; cursor < end; cursor++) offsets.push(cursor + 1);
+  };
+  for (const match of line.matchAll(MARK_TAG)) {
+    if (match.index < cursor) continue;
+    append(match.index);
+    const [, closing, kind, id] = match;
+    cursor += match[0].length;
+    if (!closing && kind === 'c') {
+      const close = '</c' + id + '>';
+      const end = line.indexOf(close, cursor);
+      if (end === -1) return finish(match.index);
+      cursor = end + close.length;
+      prose += '\uFFFC';
+      offsets.push(cursor);
+    } else if (closing && offsets.at(-1) === match.index) {
+      offsets[offsets.length - 1] = cursor;
+    }
+  }
+  // 生成の末尾がマーカーの途中なら、次の更新で閉じるまで除く。
+  const unfinished = /<\/?(?:[acv]\d*\/?)?$/.exec(line);
+  const safeEnd = unfinished && unfinished.index >= cursor ? unfinished.index : line.length;
+  append(safeEnd);
+  return finish(safeEnd);
+
+  function finish(safeEnd) {
+    if (complete) return { text: line.slice(0, safeEnd).trim() };
+    const ends = sentenceEnds(prose);
+    return { text: ends.length ? line.slice(0, offsets[ends.at(-1) - 1]).trim() : '', sentences: ends.length };
+  }
+}
+
+/** 原文の木から先頭の指定数の文を除く。文の境界をまたぐ要素は残りの文字を包む。 */
+export function remainingSource(text, kinds, sentences) {
+  const tree = decode(text, kinds);
+  const prose = (nodes) => nodes.map((node) => {
+    if (node.type === 'text') return node.text;
+    if (node.type === 'wrap') return prose(node.children);
+    return '\uFFFC';
+  }).join('');
+  const plain = prose(tree);
+  const ends = sentenceEnds(plain);
+  // 原文の文末が見つからないときは全文を残す。訳文が原文より多くの文に分かれたときは、既知の最後の文まで除く。
+  let skip = ends[Math.min(sentences, ends.length) - 1] ?? 0;
+  while (skip && /\s/u.test(plain[skip] ?? '')) skip++;
+  function clip(nodes) {
+    const tail = [];
+    for (const node of nodes) {
+      if (!skip) tail.push(node);
+      else if (node.type === 'wrap') {
+        const children = clip(node.children);
+        if (children.length) tail.push({ ...node, children });
+      } else if (node.type === 'text') {
+        const rest = node.text.slice(skip);
+        skip = Math.max(0, skip - node.text.length);
+        if (rest) tail.push({ ...node, text: rest });
+      } else skip--;
+    }
+    return tail;
+  }
+  return clip(tree);
 }

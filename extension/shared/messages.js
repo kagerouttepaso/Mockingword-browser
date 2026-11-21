@@ -34,7 +34,7 @@ export const MSG = {
 
   // Offscreen Document（offscreen/）→ Service Worker
   MODEL_PROGRESS: 'local-progress', // { model, loaded, total }
-  PARTIAL: 'partial', // { requestId, text }：まとめ訳しの生成の途中（訳し終わった行を先に出すため）
+  PARTIAL: 'partial', // { requestId, text, pageRows?, tokens }：生成の途中（ページは文末まで、テキスト翻訳は全文）
 
   // Service Worker → 設定画面
   TUNE_PROGRESS: 'tune-progress', // { text?, rows? }：速さの調整の途中経過
@@ -48,7 +48,7 @@ export const MSG = {
   TRANSLATE_SELECTION: 'translate-selection', // { text }：選択範囲の訳を吹き出しで出す
   TRANSLATE_SELECTED_PARAGRAPHS: 'translate-selected-paragraphs', // { mode }：選択した段落を訳文に置き換える
   GET_STATE: 'get-state', // → { translating }
-  SHOW_PARTIAL: 'show-partial', // { id, lines: [{ i, text }] }：バッチのうち訳し終わった行
+  SHOW_PARTIAL: 'show-partial', // { id, lines: [{ i, text, complete }] }：訳し終わった行、または生成中の行の文末まで
 
   // Service Worker → テキスト翻訳（ui/translate.js）
   TAKE_TEXT: 'take-text',

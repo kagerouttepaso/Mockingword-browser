@@ -18,8 +18,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { launch, message, sleep, tabIdOf, enableModelCache } from './lib/browser.mjs';
-import { partHeaders, readMhtml } from './lib/mhtml.mjs';
+import { launch, message, sleep, enableModelCache } from './lib/browser.mjs';
+import { readMhtml } from './lib/mhtml.mjs';
+import { openReplayPage, readMockingwordPairs } from './lib/replay-page.mjs';
 import { LOG_TAG } from '../extension/shared/messages.js';
 import { analyzeEvents } from './lib/perf-trace.mjs';
 import { workRoot } from './wllama/support.mjs';
@@ -31,6 +32,12 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
 const opt = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
 const USAGE = '使い方：node tools/page-replay.mjs <MHTML> [--rounds 3] [--parallel 8] [--model 0.8B] [--out 結果フォルダー] [--artifact ID] [--compare <extension>] [--compare-artifact ID]\n       node tools/page-replay.mjs --save <URL> <保存先.mhtml>';
+
+if (args[0] === '--ux') {
+  const { runUxReplay } = await import('./profile/replay-ux.mjs');
+  await runUxReplay(args.slice(1));
+  process.exit(0);
+}
 
 // ---------------- 計測対象の保存 ----------------
 if (args[0] === '--save') {
@@ -83,27 +90,10 @@ if (opt('--compare', null) || opt('--compare-artifact', null)) variants.push({ n
 
 /** ページを開いて1回訳し、時間と記録を返す。 */
 async function translatePage(b) {
-  const { targetId, session } = await b.open('about:blank', 300);
-  await b.send('Runtime.enable', {}, session);
   const consoles = [];
-  b.on((m) => {
-    if (m.sessionId !== session) return;
-    if (m.method === 'Runtime.consoleAPICalled') {
-      const text = m.params.args.map((a) => a.value ?? '').join(' ');
-      if (text.includes(LOG_TAG)) consoles.push({ t: m.params.timestamp, text });
-    }
-    if (m.method === 'Fetch.requestPaused') {
-      const url = m.params.request.url;
-      const part = mhtml.parts.get(url);
-      if (url.startsWith('chrome-extension://')) b.send('Fetch.continueRequest', { requestId: m.params.requestId }, session).catch(() => {});
-      else if (part) b.send('Fetch.fulfillRequest', { requestId: m.params.requestId, responseCode: 200, responseHeaders: partHeaders(part), body: part.body.toString('base64') }, session).catch(() => {});
-      else b.send('Fetch.failRequest', { requestId: m.params.requestId, errorReason: 'BlockedByClient' }, session).catch(() => {});
-    }
-  });
-  await b.send('Fetch.enable', { patterns: [{ urlPattern: '*' }] }, session);
-  await b.send('Page.navigate', { url: mhtml.main }, session);
-  await sleep(2500);
-  const tabId = await tabIdOf(b, targetId);
+  const { session, tabId, close } = await openReplayPage(b, mhtml, { readyDelay: 2500, onConsole: (entry) => {
+    if (entry.text.includes(LOG_TAG)) consoles.push(entry);
+  } });
   // 訳文（訳し終わった行の途中表示を含む）が最初に入った時刻を、ページの中で取る（エポックのミリ秒）。
   await b.eval(session, `(() => {
     window.__replay = { first: null };
@@ -118,16 +108,11 @@ async function translatePage(b) {
   if (!done) throw new Error('訳し終わりのログが届きません：' + consoles.slice(-3).map((c) => c.text).join(' / '));
   const firstLine = await b.eval(session, 'window.__replay.first');
   // 品質の比較用に、段落ごとの原文と訳文をページの順に取り出す。原文は、訳文の span を含む段落の中の、包まれた原文（data-plamo-orig）を集める。
-  const pairs = await b.eval(session, `[...document.querySelectorAll('.plamo-tr')].map((tr) => {
-    let el = tr.parentElement;
-    while (el && !el.querySelector('[data-plamo-orig]')) el = el.parentElement;
-    const source = el ? [...el.querySelectorAll('[data-plamo-orig]')].filter((w) => !w.closest('.plamo-tr')).map((w) => w.textContent).join('').replace(/\\s+/g, ' ').trim() : '';
-    return { source, translation: tr.textContent.replace(/\\s+/g, ' ').trim() };
-  })`);
+  const pairs = await readMockingwordPairs(b, session);
   const screen = consoles.find((l) => l.text.includes('画面内の訳し終わり'));
   const num = (re, s) => (s?.match(re) ? Number(s.match(re)[1]) : null);
   await sleep(300); // 最後の生成の記録がService Workerへ届くのを待つ
-  await b.send('Target.closeTarget', { targetId });
+  await close();
   return {
     t0, firstLine, consoles, pairs,
     totalMs: Math.round(num(/全体の訳し終わり ([\d.]+)秒/, done.text) * 1000),

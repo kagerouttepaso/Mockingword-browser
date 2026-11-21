@@ -11,7 +11,8 @@ export const EXTENSION = path.resolve(path.dirname(new URL(import.meta.url).path
 const BROWSER = process.env.BROWSER ?? process.env.BRAVE ?? 'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe';
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-export async function launch({ port = 9350, extension = EXTENSION, width = 1200, height = 900, extensionWaitMs = 1500 } = {}) {
+export async function launch({ port = 9350, extension = EXTENSION, width = 1200, height = 900, extensionWaitMs = 1500,
+  workerPath = '/background/main.js', optionsPath = '/ui/options.html', offline = false, maximized = false, gracefulClose = false } = {}) {
   const launchStarted = performance.now();
   // 実行中の別試験のCDPへ接続せず、新しいプロファイルの起動を確認できるようにする。
   await new Promise((resolve, reject) => {
@@ -23,6 +24,9 @@ export async function launch({ port = 9350, extension = EXTENSION, width = 1200,
   const proc = spawn(BROWSER, [
     `--user-data-dir=${profile}`, `--remote-debugging-port=${port}`, `--load-extension=${extension}`, `--disable-extensions-except=${extension}`,
     '--no-first-run', '--no-default-browser-check', `--window-size=${width},${height}`,
+    ...(maximized ? ['--window-position=0,0', '--start-maximized'] : []),
+    ...(offline ? ['--disable-sync', '--disable-background-networking', '--disable-component-update', '--disable-default-apps',
+      '--disable-features=Translate,TranslateUI', '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1'] : []),
     // 試験の窓がほかの窓の後ろに隠れても、描画（requestAnimationFrame）とタイマーを止めない。止まると pdf.js がページを
     // 描き終えず、試験の結果が利用者の画面の使い方に左右された（2026-11-17、PDF翻訳のページの試験で確かめた）
     '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling',
@@ -127,12 +131,16 @@ export async function launch({ port = 9350, extension = EXTENSION, width = 1200,
       catch (error) { if (Date.now() >= deadline) throw error; await sleep(100); }
     }
   };
+  if (gracefulClose) b.close = b.closeFast;
 
   // 拡張機能のService Workerを待ち、ID と、リクエストを送るための拡張機能のページ（設定画面）を用意する。
-  const sw = await b.waitFor(async () => (await b.targets()).find((t) => t.type === 'service_worker' && t.url.endsWith('/background/main.js')), 20000, 300);
-  if (!sw) throw new Error('拡張機能のService Workerが起動しませんでした（manifest の誤りなど）');
+  const sw = await b.waitFor(async () => (await b.targets()).find((t) => t.type === 'service_worker' && t.url.endsWith(workerPath)), 20000, 300);
+  if (!sw) {
+    await b.close();
+    throw new Error('拡張機能のService Workerが起動しませんでした（manifest の誤りなど）');
+  }
   b.extensionId = new URL(sw.url).host;
-  b.ext = (await b.open(`chrome-extension://${b.extensionId}/ui/options.html`, extensionWaitMs)).session;
+  b.ext = (await b.open(`chrome-extension://${b.extensionId}${optionsPath}`, extensionWaitMs)).session;
   await b.waitFor(() => b.eval(b.ext, `typeof chrome !== 'undefined' && !!chrome.runtime?.sendMessage`), 10000, 200);
   if (extensionWaitMs === 0 && !await b.waitFor(() => b.eval(b.ext, `chrome.storage.sync.get('settingsVersion').then(value => !!value.settingsVersion)`), 10000, 100)) throw new Error('拡張機能の初期設定が完了しませんでした');
   b.launchTimings = { browserMs: browserConnected - launchStarted, extensionMs: performance.now() - browserConnected, totalMs: performance.now() - launchStarted };

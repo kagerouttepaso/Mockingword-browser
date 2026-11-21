@@ -3,7 +3,60 @@ import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { pageReadable, runaway, splitLong, untranslated } from '../extension/shared/text.js';
 import { translateBatch } from '../extension/core/translator.js';
-import { decode, encode } from '../extension/shared/markup.js';
+import { decode, encode, previewLine, remainingSource } from '../extension/shared/markup.js';
+import { LOG_SOURCE } from '../extension/shared/messages.js';
+import { analyzeUx, dispatchDiagnostics, median } from './profile/replay-ux-analysis.mjs';
+
+test('UX の完了時刻と網羅率は非表示とスクロール時の対象を分けて数える', () => {
+  const inventory = [
+    { id: 1, initial: 'viewport', source: 'Heading', rendered: '見出し', lead: true, completeAt: 110, displayChanges: [] },
+    { id: 2, initial: 'viewport', source: 'Lead. Keep reading.', rendered: '最初の文です。続きです。', lead: true, paragraph: true, completeAt: 125,
+      displayChanges: [{ at: 109, text: '最初の文です。 Keep reading.', position: 'viewport' }] },
+    { id: 3, initial: 'shown', source: 'Next', rendered: '次の段落', afterScroll: true, paragraph: true, completeAt: 147,
+      displayChanges: [{ at: 144, text: '次の段落', position: 'viewport' }], evidence: { output: true } },
+    { id: 4, initial: 'hidden', source: 'Menu', rendered: 'Menu', collapsed: true, completeAt: null, displayChanges: [] },
+    { id: 5, initial: 'viewport', source: 'Another.', rendered: '別の段落です。', paragraph: true, completeAt: 125,
+      displayChanges: [{ at: 106, text: 'Another.', position: 'viewport' }, { at: 124, text: '別の段落です。', position: 'viewport' }] },
+  ];
+  const result = analyzeUx({ startAt: 100, observedAt: 180, scroll: { at: 127 }, inventory,
+    events: [{ at: 110, complete: true }, { at: 125, complete: true }, { at: 125, complete: true }, { at: 147, complete: true }] });
+  assert.equal(result.initialViewportMs, 25);
+  assert.equal(result.headingsAndLeadMs, 25);
+  assert.equal(result.firstViewportSentenceMs, 9);
+  assert.equal(result.initialParagraphReadMs, 24);
+  assert.equal(result.scrolledParagraphReadMs, 20);
+  assert.equal(result.scrollFollowMs, 20);
+  assert.equal(result.shownMs, 47);
+  assert.equal(result.totalMs, null);
+  assert.deepEqual(result.counts.collapsed, { translated: 0, total: 1 });
+  assert.deepEqual(result.coverage, [
+    { ms: 0, translated: 0 }, { ms: 10, translated: 1 }, { ms: 25, translated: 3 },
+    { ms: 47, translated: 4 }, { ms: 80, translated: 4 },
+  ]);
+  assert.deepEqual(result.incomplete, [4]);
+  assert.equal(median([10, null, 20]), 15);
+});
+
+test('生成枠の占有は枠の取得・解放で数え、受信待ち時間とは分ける', () => {
+  const traces = [
+    { source: LOG_SOURCE.model, event: '生成', startAt: 101, acquiredAt: 104, releasedAt: 110 },
+    { source: LOG_SOURCE.model, event: '生成', requestId: 'page:3', startAt: 105, acquiredAt: 108, releasedAt: 114, genMs: 4 },
+    { event: '受信', id: 1, pageAt: 111, pagePending: 2 },
+    { event: '送信対象選択', selectedAt: 112, ms: 0.25, pending: 2, selected: 1 },
+    { event: '送信', id: 3, pageAt: 105, lines: 5, screen: 4 },
+    { event: '送信', id: 4, pageAt: 113 },
+    { event: '受信', id: 2, pageAt: 115, pagePending: 1 },
+    { event: '受信', id: 3, pageAt: 116, ms: 11, pagePending: 0 },
+  ];
+  const result = dispatchDiagnostics(traces, 100, 120, 2);
+  assert.deepEqual(result.occupancy, [[0, 0], [4, 1], [8, 2], [10, 1], [14, 0]]);
+  assert.deepEqual(result.byCount, { 0: 10, 1: 8, 2: 2 });
+  assert.deepEqual(result.requests[0], { id: 3, sentMs: 5, lines: 5, screen: 4,
+    replies: [{ atMs: 16, elapsedMs: 11, outcome: '受信' }],
+    generations: [{ acquiredMs: 8, releasedMs: 14, genMs: 4, outcome: '生成' }] });
+  assert.deepEqual(result.replyToNextSend.map((reply) => reply.gapMs), [2, null]);
+  assert.deepEqual(result.selection, [{ at: 12, ms: 0.25, pending: 2, selected: 1 }]);
+});
 
 test('splitLong：長い段落を文の切れ目で分ける', () => {
   const text = 'This is a sentence. '.repeat(100);
@@ -82,6 +135,52 @@ test('decode：崩れたマーカーは捨てて文字を残し、閉じなか�
   assert.deepEqual(decode('<a1>外<a2>内</a1>後', kinds), [{ type: 'wrap', id: 1, children: [txt('外'), txt('内')] }, txt('後')], '外側が先に閉じたら内側を外す');
   assert.deepEqual(decode('<a9>番号違い</a9><c1>x</c1>', kinds), [txt('番号違い'), txt('x')], '番号・種類の合わないマーカーは文字だけ');
   assert.deepEqual(decode('<img src=x onerror=alert(1)>', kinds), [txt('<img src=x onerror=alert(1)>')]);
+});
+
+test('途中表示は閉じた文末で切り、原文の残りは文をまたぐ書式ごと保つ', () => {
+  assert.deepEqual(previewLine('「1.23です。」次の文'), { text: '「1.23です。」', sentences: 1 });
+  assert.deepEqual(previewLine('The value is 1.23. Next'), { text: 'The value is 1.23.', sentences: 1 });
+  assert.deepEqual(previewLine('أين الملف؟ الجملة التالية'), { text: 'أين الملف؟', sentences: 1 });
+  assert.deepEqual(remainingSource('<a1>First. Second</a1> sentence.', ['a'], 1), [
+    { type: 'wrap', id: 1, children: [txt('Second')] }, txt(' sentence.'),
+  ]);
+});
+
+test('途中表示に書きかけのマーカーとコピーする要素の中身が漏れない', () => {
+  const line = '<a1>リンクです。</a1><c2>foo.bar.';
+  const expected = '<a1>リンクです。</a1>';
+  assert.equal(previewLine(line).text, expected);
+  assert.equal(previewLine(line, true).text, expected);
+  assert.equal(previewLine(expected + '</a').text, expected);
+  assert.equal(previewLine('<c2>foo.bar.</c2> 続きは').text, '');
+  assert.deepEqual(decode(previewLine('<a1>リンクです。続きは').text, ['a']), [txt('リンクです。')]);
+});
+
+test('確定した訳文が途中の文字列と同じでも、原文の残りを消して書式を確定する', async (t) => {
+  const savedChrome = globalThis.chrome;
+  globalThis.chrome = { storage: { sync: { get: async () => ({}) }, onChanged: { addListener() {} } } };
+  const { apply } = await import('../extension/page/write.js').finally(() => (globalThis.chrome = savedChrome));
+  const attributes = new Map([['data-plamo-orig', 'partial']]);
+  const wrapper = { hasAttribute: (name) => attributes.has(name), getAttribute: (name) => attributes.get(name), setAttribute: (name, value) => attributes.set(name, value),
+    removeAttribute: (name) => attributes.delete(name) };
+  const translation = '<a1>確定です。</a1>';
+  const link = { removeAttribute() {}, querySelectorAll: () => [], append: t.mock.fn() };
+  const trSpan = { isConnected: true, removeAttribute: t.mock.fn(), replaceChildren: t.mock.fn() };
+  const para = {
+    nodes: [{ isConnected: true, parentElement: wrapper }],
+    element: { removeAttribute() {}, style: { removeProperty() {} } },
+    trSpan, translation: null, partial: { text: translation, complete: false },
+    marks: [{ kind: 'a', el: { cloneNode: () => link } }],
+  };
+  globalThis.document = { createTextNode: txt };
+  t.after(() => { delete globalThis.document; });
+  apply(para, translation);
+  assert.equal(para.translation, translation);
+  assert.equal(para.partial, null);
+  assert.equal(attributes.get('data-plamo-orig'), 'done');
+  assert.deepEqual(trSpan.removeAttribute.mock.calls[0].arguments, ['data-plamo-partial']);
+  assert.deepEqual(trSpan.replaceChildren.mock.calls[0].arguments, [link]);
+  assert.deepEqual(link.append.mock.calls[0].arguments, [txt('確定です。')]);
 });
 
 test('untranslated：短い英字のバッジだけの行は、英語のまま返っても訳し直さない。地の文のある行は訳し直す', () => {

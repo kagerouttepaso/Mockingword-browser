@@ -8,12 +8,6 @@ import { chunk, splitLong, untranslated } from '../shared/text.js';
 /** 長い1段落はこの字数ごとに文の切れ目で分けて訳す。 */
 const LONG_TEXT = 1200;
 
-/**
- * まとめ訳しの途中経過の対応。リクエストの番号 → バッチの何行目を訳しているか（キャッシュにあった行は送らないので、ずれる）。
- * Service Workerが、Offscreen Documentから届いた途中経過の行を、ページのバッチの行へ戻すときに使う。
- */
-export const partialLines = new Map();
-
 /** 原文の並びのうち、キャッシュにある訳を返す（無いものは null）。ページが訳し始める前に、キャッシュの分をまとめて置き換えるため。 */
 export async function lookupCached(texts, options) {
   return (await lookup(texts.map((t) => cacheKey(t, options)))).map((v) => v ?? null);
@@ -34,7 +28,8 @@ export async function translateText(text, options, stats = null) {
   const live = parts.map(() => '');
   const out = await Promise.all(parts.map(async (part, k) => {
     const onPartial = options.onText ? (t) => { live[k] = t; options.onText(live.filter(Boolean).join(sep)); } : undefined;
-    const r = await complete(part, onPartial ? { ...options, onPartial } : options);
+    // 分割した段落の途中表示には先頭の片を使う。後の片が先にできても文頭から順に表示する。
+    const r = await complete(part, { ...options, onPartial, pageRows: k === 0 ? options.pageRows : undefined });
     if (stats) {
       stats.tokens += r.tokens ?? 0;
       stats.loadMs = Math.max(stats.loadMs, r.loadMs ?? 0);
@@ -62,24 +57,20 @@ export async function translateBatch(texts, options) {
   if (pending.length === 0) return { results, stats };
 
   // onLines(i, 訳文の途中)：行ごとの途中を受け取る（テキスト翻訳の逐次表示）。
-  const one = async (i) => {
-    results[i] = await translateText(texts[i], options.onLines ? { ...options, onText: (t) => options.onLines(i, t) } : options, stats);
+  const one = async (i, preview) => {
+    const onText = options.onLines ? (t) => options.onLines(i, t) : undefined;
+    const pageRows = options.requestId && preview ? [i] : undefined;
+    results[i] = await translateText(texts[i], { ...options, onText, pageRows }, stats);
     stats.requests++;
   };
   // 1行だけ、または長い段落を含むときは1行ずつ訳す。長い段落の片は translateText の中で同時に送る。
   if (pending.length === 1 || pending.some((i) => texts[i].length > LONG_TEXT)) {
-    for (const i of pending) await one(i);
+    for (const i of pending) await one(i, true);
     return { results, stats };
   }
 
-  if (options.requestId) partialLines.set(options.requestId, pending);
-  let r;
-  try {
-    const onPartial = options.onLines ? (t) => t.split('\n').slice(0, pending.length).forEach((l, k) => options.onLines(pending[k], l.trim())) : undefined;
-    r = await complete(pending.map((i) => texts[i]).join('\n'), { ...options, partial: !!options.requestId, onPartial });
-  } finally {
-    partialLines.delete(options.requestId);
-  }
+  const onPartial = options.onLines ? (t) => t.split('\n').slice(0, pending.length).forEach((l, k) => options.onLines(pending[k], l.trim())) : undefined;
+  const r = await complete(pending.map((i) => texts[i]).join('\n'), { ...options, pageRows: options.requestId ? pending : undefined, onPartial });
   stats.requests++;
   stats.tokens += r.tokens ?? 0;
   stats.loadMs = Math.max(stats.loadMs, r.loadMs ?? 0);

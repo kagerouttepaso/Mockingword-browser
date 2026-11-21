@@ -37,7 +37,10 @@ export function readMhtml(file) {
       const text = buf.toString('latin1');
       if (text.includes('cid:')) buf = Buffer.from(text.replace(/(["'(])cid:/g, `$1${CID_BASE}`), 'latin1');
     }
-    parts.set(loc, { type: type.startsWith('text/') ? type + '; charset=utf-8' : type, body: buf });
+    const charset = head.match(/Content-Type:[^\r\n]*(?:\r?\n[\t ][^\r\n]*)*?;\s*charset\s*=\s*"?([\w-]+)/i)?.[1]
+      ?? (type === 'text/html' ? buf.subarray(0, 8192).toString('latin1').match(/<meta\b[^>]*?\bcharset\s*=\s*["']?\s*([\w-]+)/i)?.[1] : null)
+      ?? 'utf-8';
+    parts.set(loc, { type: type.startsWith('text/') ? type + '; charset=' + charset : type, body: buf });
     main ??= loc;
   }
   return { main, parts };

@@ -3,7 +3,7 @@
 
 import { LOG_SOURCE, LOG_TAG, MSG, OFFSCREEN } from '../shared/messages.js';
 import { CancelledError, cancel, forget, status, streamPartial, unload } from '../core/engine.js';
-import { lookupCached, partialLines, translateBatch, translateLines, translateText } from '../core/translator.js';
+import { lookupCached, translateBatch, translateLines, translateText } from '../core/translator.js';
 import { clear as clearCache, stats as cacheStats } from '../core/cache.js';
 import { migrate, settings } from './config.js';
 import { addLog, clearLogs, logs } from './logs.js';
@@ -177,12 +177,12 @@ const handlers = {
   },
   async [MSG.PARTIAL](message) {
     if (streamPartial(message)) return { ok: true }; // テキスト翻訳の途中（core/engine.js）
-    // Offscreen Documentから：まとめ訳しの途中。訳し終わった行（最後の行は途中なので除く）を、ページのバッチの行へ戻して渡す。
-    const rows = partialLines.get(message.requestId);
+    // Offscreen Documentで切り出した行を、ページのバッチの行へ戻して渡す。
+    const rows = message.pageRows;
     const m = /^page:(\d+):(\d+):(\d+)$/.exec(message.requestId ?? '');
-    if (!rows || !m) return { ok: true };
-    const done = message.text.split('\n').slice(0, -1);
-    const lines = done.slice(0, rows.length).map((text, k) => ({ i: rows[k], text: text.trim() }));
+    if (!rows || !m || !batches.has(message.requestId)) return { ok: true };
+    const snapshot = message.text.split('\n');
+    const lines = snapshot.slice(0, rows.length).map((text, k) => ({ i: rows[k], text, complete: k < snapshot.length - 1 }));
     chrome.tabs.sendMessage(Number(m[1]), { type: MSG.SHOW_PARTIAL, id: Number(m[3]), lines }, { frameId: Number(m[2]) }).catch(() => {});
     return { ok: true };
   },

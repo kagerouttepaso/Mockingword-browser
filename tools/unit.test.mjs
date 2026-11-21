@@ -3,7 +3,7 @@ import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { pageReadable, runaway, splitLong, untranslated } from '../extension/shared/text.js';
 import { translateBatch } from '../extension/core/translator.js';
-import { decode, encode } from '../extension/shared/markup.js';
+import { decode, encode, previewLine, remainingSource } from '../extension/shared/markup.js';
 import { LOG_SOURCE } from '../extension/shared/messages.js';
 import { analyzeUx, dispatchDiagnostics, median } from './profile/replay-ux-analysis.mjs';
 
@@ -129,6 +129,52 @@ test('decode：崩れたマーカーは捨てて文字を残し、閉じなか�
   assert.deepEqual(decode('<a1>外<a2>内</a1>後', kinds), [{ type: 'wrap', id: 1, children: [txt('外'), txt('内')] }, txt('後')], '外側が先に閉じたら内側を外す');
   assert.deepEqual(decode('<a9>番号違い</a9><c1>x</c1>', kinds), [txt('番号違い'), txt('x')], '番号・種類の合わないマーカーは文字だけ');
   assert.deepEqual(decode('<img src=x onerror=alert(1)>', kinds), [txt('<img src=x onerror=alert(1)>')]);
+});
+
+test('途中表示は閉じた文末で切り、原文の残りは文をまたぐ書式ごと保つ', () => {
+  assert.deepEqual(previewLine('「1.23です。」次の文'), { text: '「1.23です。」', sentences: 1 });
+  assert.deepEqual(previewLine('The value is 1.23. Next'), { text: 'The value is 1.23.', sentences: 1 });
+  assert.deepEqual(previewLine('أين الملف؟ الجملة التالية'), { text: 'أين الملف؟', sentences: 1 });
+  assert.deepEqual(remainingSource('<a1>First. Second</a1> sentence.', ['a'], 1), [
+    { type: 'wrap', id: 1, children: [txt('Second')] }, txt(' sentence.'),
+  ]);
+});
+
+test('途中表示に書きかけのマーカーとコピーする要素の中身が漏れない', () => {
+  const line = '<a1>リンクです。</a1><c2>foo.bar.';
+  const expected = '<a1>リンクです。</a1>';
+  assert.equal(previewLine(line).text, expected);
+  assert.equal(previewLine(line, true).text, expected);
+  assert.equal(previewLine(expected + '</a').text, expected);
+  assert.equal(previewLine('<c2>foo.bar.</c2> 続きは').text, '');
+  assert.deepEqual(decode(previewLine('<a1>リンクです。続きは').text, ['a']), [txt('リンクです。')]);
+});
+
+test('確定した訳文が途中の文字列と同じでも、原文の残りを消して書式を確定する', async (t) => {
+  const savedChrome = globalThis.chrome;
+  globalThis.chrome = { storage: { sync: { get: async () => ({}) }, onChanged: { addListener() {} } } };
+  const { apply } = await import('../extension/page/write.js').finally(() => (globalThis.chrome = savedChrome));
+  const attributes = new Map([['data-plamo-orig', 'partial']]);
+  const wrapper = { hasAttribute: (name) => attributes.has(name), getAttribute: (name) => attributes.get(name), setAttribute: (name, value) => attributes.set(name, value),
+    removeAttribute: (name) => attributes.delete(name) };
+  const translation = '<a1>確定です。</a1>';
+  const link = { removeAttribute() {}, querySelectorAll: () => [], append: t.mock.fn() };
+  const trSpan = { isConnected: true, removeAttribute: t.mock.fn(), replaceChildren: t.mock.fn() };
+  const para = {
+    nodes: [{ isConnected: true, parentElement: wrapper }],
+    element: { removeAttribute() {}, style: { removeProperty() {} } },
+    trSpan, translation: null, partial: { text: translation, complete: false },
+    marks: [{ kind: 'a', el: { cloneNode: () => link } }],
+  };
+  globalThis.document = { createTextNode: txt };
+  t.after(() => { delete globalThis.document; });
+  apply(para, translation);
+  assert.equal(para.translation, translation);
+  assert.equal(para.partial, null);
+  assert.equal(attributes.get('data-plamo-orig'), 'done');
+  assert.deepEqual(trSpan.removeAttribute.mock.calls[0].arguments, ['data-plamo-partial']);
+  assert.deepEqual(trSpan.replaceChildren.mock.calls[0].arguments, [link]);
+  assert.deepEqual(link.append.mock.calls[0].arguments, [txt('確定です。')]);
 });
 
 test('untranslated：短い英字のバッジだけの行は、英語のまま返っても訳し直さない。地の文のある行は訳し直す', () => {

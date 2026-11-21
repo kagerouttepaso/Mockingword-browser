@@ -102,7 +102,7 @@ async function completeOnce(text, options) {
     maxTokens: maxTokensFor(text),
     lines: text.split('\n').length,
     sourceChars: text.length, // 訳文が原文よりずっと長くなるまでは、繰り返しで打ち切らない
-    partial: !!options.partial || !!options.stream, // まとめ訳しの途中経過を知らせてもらう
+    pageRows: options.pageRows, // 生成する行 → キャッシュにあった行も含むページ側の行
     stream: !!options.stream, // 行の区切りを待たず、0.1秒おきに途中を知らせてもらう（テキスト翻訳）
     noCache: !!options.noCache, // 速さの調整だけ：前のリクエストの読み込み済み原文を使わせない（background/tune.js）
     stop: STOP,

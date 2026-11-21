@@ -7,7 +7,7 @@ import { chunk, groupedChunk, short } from '../shared/text.js';
 import { groupOf } from './collect.js';
 import { barHasError, barMessage, setBarDone, showBar, updateBar } from './bar.js';
 import { clearNotice } from './bubble.js';
-import { apply, setWorking } from './write.js';
+import { apply, applyPartial, clearPartial, setWorking } from './write.js';
 import { isFront, markReading, onScreen, priority } from './priority.js';
 import { debug, log, notify, seconds, send, state, tokensPerSecond, trace } from './state.js';
 
@@ -183,14 +183,15 @@ async function runChunk(chunk, generation) {
       state.busyMs += performance.now() - state.busySince;
       state.busySince = 0;
     }
-    setWorking(chunk, false);
   }
   const ms = Math.round(performance.now() - t);
   debug(`受信 ${chunk.length}行（${ms}ms）${response?.ok ? '' : ' 失敗：' + (response?.error ?? '返事なし')}`);
   trace(response?.cancelled ? '取り消し済み' : response?.ok ? '受信' : '失敗', { id, ms, error: response?.error, requests: response?.stats?.requests });
   const waiters = takeWaiting(texts, generation);
-  setWorking(waiters, false);
   if (generation !== state.generation) return; // 途中で訳し直し・翻訳の終了があった（待っていた段落も捨てる。訳し直しは全段落を入れ直す）
+  const current = chunk.filter((para, i) => para.text === texts[i]);
+  setWorking([...current, ...waiters], false);
+  if (!response?.ok) for (const para of [...current, ...waiters]) clearPartial(para);
   if (response?.cancelled) {
     // 古くなって取り消した（新しい文字は書き換えの監視が送り直す）。文字が変わらずページに残っている段落と、
     // 同じ文を待っていた段落は列に戻す（取り消しが古くなっていない段落にも及んだとき、訳されずに残さない）。
@@ -203,7 +204,7 @@ async function runChunk(chunk, generation) {
   clearNotice();
   if (!response?.ok) {
     // 失敗が続くときに送り続けないよう、利用者が次に操作するまで止める。
-    for (const para of [...chunk, ...waiters]) state.pending.add(para);
+    for (const para of [...current, ...waiters]) if (connected(para)) state.pending.add(para);
     state.halted = true;
     showBar();
     barMessage(response?.error ?? '翻訳に失敗しました。', true);
@@ -215,8 +216,8 @@ async function runChunk(chunk, generation) {
   state.tokens += response.stats.tokens ?? 0;
   state.loadMs = Math.max(state.loadMs, response.stats.loadMs ?? 0);
   chunk.forEach((para, i) => {
-    state.cache.set(para.text, response.results[i]);
-    if (para.translation !== response.results[i]) apply(para, response.results[i]); // 逐次表示で同じ訳を出していれば書き直さない
+    state.cache.set(texts[i], response.results[i]);
+    if (para.text === texts[i] && para.translation !== response.results[i]) apply(para, response.results[i]);
   });
   // 同じ文の訳を待っていた段落にも書き込む。待つ間に文字が変わった段落は、キャッシュに無ければ列へ戻す。
   for (const para of waiters) {
@@ -246,25 +247,21 @@ export function cancelStale() {
 }
 
 /**
- * バッチのうち訳し終わった行を、返事を待たずに先に出す（Offscreen Documentが生成の途中で送ってくる）。
+ * バッチのうち訳し終わった行と、生成中の行の文末までを、返事を待たずに出す。
  * 最後の返事で、行がずれた・訳されていない行は訳し直した訳に置き換わる。キャッシュには最後の返事だけを入れる。
  */
 export function showPartial(id, lines) {
   const c = state.chunks.get(id);
-  if (!c || c.cancelling) return;
-  for (const { i, text } of lines) {
+  if (!c || c.cancelling || c.generation !== state.generation) return;
+  for (const { i, text, complete } of lines) {
     const para = c.paras[i];
-    if (!para || !text.trim() || para.translation === text || para.text !== c.texts[i]) continue;
-    apply(para, text);
-    setWorking([para], false);
+    if (!para || !text || para.text !== c.texts[i]) continue;
+    applyPartial(para, text, complete);
     // 同じ文を待っている段落にも先に出す（最後の返事で確定した訳に置き換わる）。
     for (const w of waiting.get(`${c.generation}\n${c.texts[i]}`) ?? []) {
-      if (w.text !== c.texts[i] || w.translation === text) continue;
-      apply(w, text);
-      setWorking([w], false);
+      if (w.text === c.texts[i]) applyPartial(w, text, complete);
     }
   }
-  updateBar();
 }
 
 /** 訳を待つ段落も送ったバッチも無くなったら、「訳し終えました」を出す（最初のページ全体だけ）。 */

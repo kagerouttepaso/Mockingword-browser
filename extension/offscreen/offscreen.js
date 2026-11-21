@@ -3,6 +3,7 @@
 // メモリーを空けるときは、Service Workerがこのページごと閉じる（未使用が続いたとき・「モデルを解放」）。設計は docs/03_翻訳コア.md。
 import { Wllama } from '../vendor/wllama/index.js';
 import { runaway } from '../shared/text.js';
+import { previewLine } from '../shared/markup.js';
 import { LOG_SOURCE, MSG, OFFSCREEN } from '../shared/messages.js';
 import { LOCAL_DEFAULTS } from '../shared/settings.js';
 
@@ -204,18 +205,25 @@ async function complete(message) {
   let keep = 0;
   let usage = null;
   let first = 0;
-  // まとめ訳しの途中経過。行が増えたときだけ、0.25秒おきまでに知らせる（Service Workerが訳し終わった行をページへ渡す）。
+  // ページの翻訳は、完了した行と最後の行の文末までを、変化したときだけ0.25秒おきまでに知らせる。
   // stream（テキスト翻訳）は行の区切りを待たず0.1秒おきに、生成したトークン数（受け取った回数）も添えて知らせる。
-  let lastPartial = 0;
-  let sentLines = 0;
+  let lastPartial = -Infinity;
+  let sent = '';
   let pieces = 0;
   const partial = () => {
-    const lines = text.split('\n').length - 1; // 最後の行はまだ途中
     const now = performance.now();
-    if (message.stream ? now - lastPartial < 100 : lines <= sentLines || now - lastPartial < 250) return;
-    sentLines = lines;
+    if (now - lastPartial < (message.stream ? 100 : 250)) return;
     lastPartial = now;
-    chrome.runtime.sendMessage({ type: MSG.PARTIAL, requestId: message.requestId, text, tokens: pieces }).catch(() => {});
+    const snapshot = message.stream ? text : pagePreview();
+    if (!message.stream && snapshot === sent) return;
+    sent = snapshot;
+    chrome.runtime.sendMessage({ type: MSG.PARTIAL, requestId: message.requestId, text: snapshot,
+      pageRows: message.pageRows, tokens: pieces }).catch(() => {});
+  };
+  const pagePreview = () => {
+    const lines = text.split('\n');
+    return lines.slice(0, message.pageRows.length + 1).map((line, i) =>
+      i < message.pageRows.length ? previewLine(line, i < lines.length - 1).text : '').join('\n');
   };
   // 同時実行数を下げて読み込んだときは、ここで空きを待つ。待つ間に取り消されたら生成しない。
   const release = await acquire(entry);
@@ -242,7 +250,7 @@ async function complete(message) {
         text += chunk.choices?.[0]?.text ?? chunk.content ?? '';
         usage = chunk.usage ?? usage;
         if (!keep && (keep = runaway(text, message.lines, message.sourceChars))) controller.abort();
-        else if (message.partial) partial();
+        else if (message.pageRows || message.stream) partial();
       },
     });
   } catch (e) {

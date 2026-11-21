@@ -2,7 +2,7 @@
 import { prepareModelCache, startModelServer, DEFAULT_EXTENSION } from './model-cache.mjs';
 
 const TARGET_TYPES = ['page', 'iframe', 'worker', 'shared_worker', 'service_worker', 'background_page', 'other'];
-export async function installModelInterception(b, prepared, { log = console.log } = {}) {
+export async function installModelInterception(b, prepared, { log = console.log, allowAbortedIntercept = false } = {}) {
   const local = await startModelServer(prepared.entries);
   // 製品が参照する固定URLだけを対象とし、試験ページ自身の通信とHTTPキャッシュを保つ。
   const modelUrls = (prepared.catalog ?? prepared.entries).flatMap((model) => [model.url, model.rawUrl]);
@@ -157,7 +157,12 @@ export async function installModelInterception(b, prepared, { log = console.log 
       const ip = response.remoteIPAddress?.replace(/^\[|\]$/g, '');
       if (ip && !['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(ip)) fail(new Error(`モデルがローカル以外から返りました: ${ip} ${request.url}`));
     }
-    if (event.method === 'Network.loadingFailed' && requests.has(key)) fail(new Error(`ローカルモデルの読込みに失敗しました: ${event.params.errorText} ${requests.get(key).url}`));
+    if (event.method === 'Network.loadingFailed' && requests.has(key)) {
+      const request = requests.get(key);
+      if (!(allowAbortedIntercept && request.intercepted && event.params.errorText === 'net::ERR_ABORTED')) {
+        fail(new Error(`ローカルモデルの読込みに失敗しました: ${event.params.errorText} ${request.url}`));
+      }
+    }
   }
   const filter = [...TARGET_TYPES.map((type) => ({ type })), { exclude: true }];
   b.on(eventListener);

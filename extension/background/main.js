@@ -42,24 +42,25 @@ const batches = new Set();
 
 /** メッセージの種類ごとの受け持ち。返した値をそのまま返事にする。 */
 const handlers = {
-  async [MSG.TRANSLATE_BATCH](message, sender, options) {
+  async [MSG.TRANSLATE_BATCH](message, sender) {
     lastTabId = sender.tab?.id ?? lastTabId;
-    await markUse();
-    options.requestId = requestIdOf(sender, message.id);
+    const requestId = requestIdOf(sender, message.id);
     const t0 = Date.now();
-    batches.add(options.requestId);
+    batches.add(requestId);
     try {
-      const r = await translateBatch(message.texts, options);
-      addLog(LOG_SOURCE.background, '完了', { requestId: options.requestId, ms: Date.now() - t0, requests: r.stats.requests, fallback: r.stats.fallback });
+      const options = await settings();
+      await markUse();
+      const r = await translateBatch(message.texts, { ...options, requestId });
+      addLog(LOG_SOURCE.background, '完了', { requestId, ms: Date.now() - t0, requests: r.stats.requests, fallback: r.stats.fallback });
       await markUse();
       return { ok: true, model: options.model, ...r };
     } catch (e) {
       if (!(e instanceof CancelledError)) throw e;
-      addLog(LOG_SOURCE.background, '取り消し済み', { requestId: options.requestId, ms: Date.now() - t0 });
+      addLog(LOG_SOURCE.background, '取り消し済み', { requestId, ms: Date.now() - t0 });
       return { ok: false, cancelled: true };
     } finally {
-      batches.delete(options.requestId);
-      forget(options.requestId); // 番号はページごとに1から振り直すので、次のページの同じ番号を取り消さない
+      batches.delete(requestId);
+      forget(requestId); // 番号はページごとに1から振り直すので、次のページの同じ番号を取り消さない
     }
   },
   async [MSG.TRANSLATE_ONE](message, sender, options) {
@@ -201,9 +202,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.target === OFFSCREEN) return false;
   const handler = handlers[message?.type];
   if (!handler) return false;
-  settings()
-    .then((options) => handler(message, sender, options))
-    .then(sendResponse)
+  const response = [MSG.TRANSLATE_BATCH, MSG.CANCEL].includes(message.type)
+    ? handler(message, sender)
+    : settings().then((options) => handler(message, sender, options));
+  response.then(sendResponse)
     .catch((e) => {
       console.error(`${LOG_TAG} Service Worker で失敗`, message.type, e?.stack ?? e);
       sendResponse({ ok: false, error: e.message });

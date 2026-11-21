@@ -1,7 +1,7 @@
 // PDF翻訳のページの Worker。PDFium・harfbuzz・pdf-lib の重い処理（段落の読み取り、ページの書き込み、保存）を画面の外で行い、
 // 数百ページの PDF でも画面の操作を止めない。翻訳は Worker から頼めない（chrome.* が無い）ので、画面に頼んで結果を受け取る。
 //
-// 画面 → Worker：{ type: 'open', bytes }・{ type: 'start' }（中止した後は続きから）・{ type: 'stop' }・{ type: 'focus', page }・
+// 画面 → Worker：{ type: 'open', bytes }・{ type: 'start', parallel }（中止した後は続きから）・{ type: 'stop' }・{ type: 'focus', page }・
 //   { type: 'translated', id, results | error }・{ type: 'save' }
 // Worker → 画面：{ type: 'opened', paragraphs }・{ type: 'translate', id, texts }・{ type: 'status', list, status }・
 //   { type: 'version', bytes, pages }・{ type: 'titles', entries }・{ type: 'stage', stage, done, total }・
@@ -17,18 +17,23 @@ const waiting = new Map();
 /** 画面へ渡す段落の要約（半透明の表示を置く位置と色）。 */
 const brief = (p) => ({ id: p.id, page: p.page, box: paragraphBox(p), background: p.background ?? null });
 
-function translate(texts) {
+function translate(texts, signal) {
+  const id = ++seq;
+  const abort = () => waiting.get(id)?.reject(signal.reason);
   return new Promise((resolve, reject) => {
-    const id = ++seq;
     waiting.set(id, { resolve, reject });
+    signal.addEventListener('abort', abort, { once: true });
     postMessage({ type: 'translate', id, texts });
+  }).finally(() => {
+    waiting.delete(id);
+    signal.removeEventListener('abort', abort);
   });
 }
 
-async function start() {
+async function start(parallel) {
   try {
     const stats = await job.run({
-      translate,
+      translate, parallel,
       focus: () => focus,
       onStage: (stage) => postMessage({ type: 'stage', ...stage }),
       onStatus: (list, status) => { if (list.length) postMessage({ type: 'status', list: list.map(brief), status }); },
@@ -46,12 +51,11 @@ onmessage = async ({ data: m }) => {
     if (m.type === 'open') {
       job = await openPdfJob(m.bytes, { onFontProgress: (done, total) => postMessage({ type: 'stage', stage: 'font', done, total }) });
       postMessage({ type: 'opened', paragraphs: job.paras.filter((p) => !p.skip).length });
-    } else if (m.type === 'start') start();
+    } else if (m.type === 'start') start(m.parallel);
     else if (m.type === 'stop') job?.stop();
     else if (m.type === 'focus') focus = m.page;
     else if (m.type === 'translated') {
       const w = waiting.get(m.id);
-      waiting.delete(m.id);
       if (m.error) w?.reject(new Error(m.error));
       else w?.resolve(m.results);
     } else if (m.type === 'save') {

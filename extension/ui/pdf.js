@@ -3,7 +3,8 @@
 // ページの段落がそろうたびにそのページを書いて版を送る。画面はその版のページに差し替える（ui/pdf-pages.js）ので、
 // 見えている訳文と保存するPDFは同じもの。訳している段落の原文は半透明にする（ui/pdf-overlay.js）。流れは docs/12_PDFの翻訳.md。
 import { MSG } from '../shared/messages.js';
-import { describeStatus } from '../shared/settings.js';
+import { describeStatus, LOCAL_DEFAULTS, normalizeLocal } from '../shared/settings.js';
+import { createPdfBatchRequests } from './pdf-batches.js';
 import { createOutline } from './pdf-outline.js';
 import { createOverlay } from './pdf-overlay.js';
 import { createPages } from './pdf-pages.js';
@@ -44,15 +45,7 @@ function watchModel(on) {
   }, 1000);
 }
 
-let batchId = 0;
-const inflight = new Set(); // 頼んでいるバッチの番号（中止するときに取り消す）
-async function translateTexts(texts) {
-  const id = ++batchId;
-  inflight.add(id);
-  const r = await chrome.runtime.sendMessage({ type: MSG.TRANSLATE_BATCH, texts, id }).finally(() => inflight.delete(id));
-  if (!r?.ok) throw new Error(r?.cancelled ? '翻訳が取り消されました' : r?.error ?? '翻訳できませんでした');
-  return r.results;
-}
+const batches = createPdfBatchRequests((message) => chrome.runtime.sendMessage(message));
 
 // ---------------- pdf.js のビューア ----------------
 
@@ -148,18 +141,15 @@ let current = null;
 let worker = null;
 let started = 0;
 let paused = false; // 中止して、再開を待っている
-
-/** 頼んでいる翻訳を Service Worker で取り消す。 */
-function cancelBatches() {
-  for (const id of inflight) chrome.runtime.sendMessage({ type: MSG.CANCEL, id }).catch(() => {});
-}
+let stopping = false;
 
 /** 訳している Worker を止めて捨てる（別の PDF を開くとき）。 */
 function dropWorker() {
-  cancelBatches();
+  batches.cancel();
   worker?.terminate();
   worker = null;
   paused = false;
+  stopping = false;
   if (running) store.abort();
   running = false;
   watchModel(false);
@@ -228,6 +218,7 @@ function finish(message, title = '') {
 }
 
 function fail(message) {
+  batches.cancel();
   store.abort();
   finish(`訳せませんでした：${message}`);
   $('start').hidden = false;
@@ -247,15 +238,17 @@ function saveFile(r) {
 }
 
 /** Worker からの知らせ（種類は pdf/worker.js の冒頭）。 */
-function onWorkerMessage({ data: m }) {
-  if (m.type === 'opened') worker.postMessage({ type: 'start' });
+function onWorkerMessage({ currentTarget: w, data: m }) {
+  if (w !== worker) return;
+  if (m.type === 'opened') startWorker(w);
   else if (m.type === 'translate') {
-    const w = worker;
-    translateTexts(m.texts).then(
-      (results) => w.postMessage({ type: 'translated', id: m.id, results }),
-      (e) => w.postMessage({ type: 'translated', id: m.id, error: e.message }),
+    if (!running || stopping) return;
+    batches.translate(m.texts).then(
+      (results) => { if (w === worker && !stopping) w.postMessage({ type: 'translated', id: m.id, results }); },
+      (e) => { if (w === worker && !stopping) w.postMessage({ type: 'translated', id: m.id, error: e.message }); },
     );
   } else if (m.type === 'stage') {
+    if (stopping) return;
     if (m.stage === 'translate' && running) $('stop').hidden = false;
     const percent = m.stage === 'translate' && m.total ? `（${Math.floor((m.done / m.total) * 100)}%）` : '';
     status.textContent = STAGES[m.stage] + percent;
@@ -268,6 +261,7 @@ function onWorkerMessage({ data: m }) {
     const s = m.stats;
     const title = `原文と同じため残した段落 ${s.same}、背景で覆った段落 ${s.masked}、縮めた段落 ${s.shrunk}、移したリンク ${s.links}、時間（ミリ秒） ${JSON.stringify(s.ms)}`;
     versionChain.then(() => {
+      if (w !== worker) return;
       if (!s.stopped) return finish(`訳しました（${s.translated}段落、${Math.round((performance.now() - started) / 1000)}秒）`, title);
       store.abort();
       paused = true;
@@ -283,10 +277,16 @@ function onWorkerMessage({ data: m }) {
   }
 }
 
+async function startWorker(w) {
+  const local = await chrome.storage.local.get(LOCAL_DEFAULTS).catch(() => LOCAL_DEFAULTS);
+  if (w === worker && running && !stopping) w.postMessage({ type: 'start', parallel: normalizeLocal(local).parallel });
+}
+
 /** 開いている PDF を訳す。ページの段落がそろうたびに、そのページを訳したPDFのページに差し替える。 */
 function start() {
   if (running || !current) return;
   running = true;
+  stopping = false;
   $('start').hidden = true;
   $('stop').disabled = false; // 「翻訳を中止」は訳し始めてから出す（Worker が PDF を読んでいる間は止める先が無い）
   $('views').hidden = false;
@@ -296,7 +296,7 @@ function start() {
     paused = false;
     status.textContent = STAGES.translate;
     worker.postMessage({ type: 'focus', page: Math.max(0, viewer.currentPageNumber - 1) });
-    worker.postMessage({ type: 'start' });
+    startWorker(worker);
     return;
   }
   started = performance.now();
@@ -356,10 +356,11 @@ $('start').onclick = () => start();
 // 翻訳を中止する：頼んでいる翻訳を取り消し、Worker は書いたページまでで止める（訳したPDFは保存できる）
 $('stop').onclick = () => {
   if (!running || !worker) return;
+  stopping = true;
   $('stop').disabled = true;
   status.textContent = '翻訳を中止しています';
   worker.postMessage({ type: 'stop' });
-  cancelBatches();
+  batches.cancel();
 };
 $('show-trans').onclick = () => store.setMode('translated');
 $('show-orig').onclick = () => store.setMode('original');

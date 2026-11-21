@@ -114,8 +114,8 @@ export function headingLike(text, { weight = 400, size = 16, base = 16 } = {}) {
  * 見出しと第1段落の間にあるボタンの文字・注記・ナビ（skip）は飛ばす。次の見出しが来たらそちらの第1段落を探す。
  * kinds：'heading'・'body'・'control'・'note'・'skip' の並び。同じ長さの並びを返す。
  */
-export function markLeads(kinds) {
-  let waiting = false;
+export function markLeads(kinds, { startsSection = false } = {}) {
+  let waiting = startsSection;
   return kinds.map((kind) => {
     if (kind === 'heading') {
       waiting = true;

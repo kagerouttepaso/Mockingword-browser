@@ -193,14 +193,24 @@ function trace(message, event, data) {
  * 取り消されたら { ok:false, cancelled:true }。打ち切りも取り消しも、wllama の中止ですぐに計算が止まる。
  */
 async function complete(message) {
-  const t0 = performance.now();
-  const entry = await ensure(message);
-  const wllama = entry.wllama;
-  const loaded = performance.now();
   const controller = new AbortController();
   const key = message.requestId ?? Symbol();
   if (!running.has(key)) running.set(key, new Set());
   running.get(key).add(controller);
+  try {
+    return await generate(message, controller);
+  } finally {
+    running.get(key)?.delete(controller);
+    if (running.get(key)?.size === 0) running.delete(key);
+  }
+}
+
+async function generate(message, controller) {
+  const t0 = performance.now();
+  const entry = await ensure(message);
+  if (controller.signal.aborted) return { ok: false, cancelled: true };
+  const wllama = entry.wllama;
+  const loaded = performance.now();
   let text = '';
   let keep = 0;
   let usage = null;
@@ -257,8 +267,6 @@ async function complete(message) {
     if (!keep && !controller.signal.aborted) throw e;
   } finally {
     release();
-    running.get(key)?.delete(controller);
-    if (running.get(key)?.size === 0) running.delete(key);
   }
   const data = {
     requestId: message.requestId,

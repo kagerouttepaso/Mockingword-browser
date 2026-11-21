@@ -4,8 +4,79 @@ import assert from 'node:assert/strict';
 import { pageReadable, runaway, splitLong, untranslated } from '../extension/shared/text.js';
 import { translateBatch } from '../extension/core/translator.js';
 import { decode, encode, previewLine, remainingSource } from '../extension/shared/markup.js';
-import { LOG_SOURCE } from '../extension/shared/messages.js';
+import { LOG_SOURCE, MSG } from '../extension/shared/messages.js';
+import { createPdfQueue } from '../extension/pdf/queue.js';
+import { createPdfBatchRequests } from '../extension/ui/pdf-batches.js';
 import { analyzeUx, dispatchDiagnostics, median } from './profile/replay-ux-analysis.mjs';
+
+const pdfParas = (...texts) => texts.map((text) => ({ text, plain: text, size: 12, lines: 1 }));
+
+test('PDFのバッチの返事が逆順でも、段落がそろったページは1回だけ書く', async () => {
+  const queue = createPdfQueue(new Map([
+    [0, pdfParas('First paragraph.', 'Shared paragraph.')],
+    [1, pdfParas('Shared paragraph.', 'Last paragraph.')],
+  ]));
+  const replies = new Map();
+  const written = [];
+  const running = queue.run({
+    parallel: 3, focus: () => 0, signal: new AbortController().signal,
+    translate([text]) {
+      const reply = Promise.withResolvers();
+      replies.set(text, reply);
+      return reply.promise;
+    },
+    onResult(_part, _results, pages) { written.push(...pages); },
+  });
+  await new Promise(setImmediate);
+  assert.deepEqual([...replies.keys()], ['First paragraph.', 'Shared paragraph.', 'Last paragraph.']);
+  replies.get('Last paragraph.').resolve(['最後の段落。']);
+  await new Promise(setImmediate);
+  assert.deepEqual(written, []);
+  replies.get('Shared paragraph.').resolve(['共通の段落。']);
+  await new Promise(setImmediate);
+  assert.deepEqual(written, [1]);
+  replies.get('First paragraph.').resolve(['最初の段落。']);
+  assert.equal(await running, false);
+  assert.deepEqual(written, [1, 0]);
+});
+
+test('PDFの中止は未完了の全バッチを取り消し、古い返事を使わずに続きから訳す', async () => {
+  const queue = createPdfQueue(new Map([[0, pdfParas('First paragraph.', 'Second paragraph.', 'Third paragraph.')]]));
+  const requests = new Map();
+  const cancelled = [];
+  const batches = createPdfBatchRequests(async ({ type, id, texts }) => {
+    if (type === MSG.CANCEL) cancelled.push(id);
+    else {
+      const reply = Promise.withResolvers();
+      requests.set(id, { texts, ...reply });
+      return reply.promise;
+    }
+  });
+  const done = [];
+  const options = {
+    parallel: 3, focus: () => 0,
+    translate: batches.translate,
+    onResult(part, _results, pages) { done.push({ part, pages }); },
+  };
+  const controller = new AbortController();
+  const first = queue.run({ ...options, signal: controller.signal });
+  await new Promise(setImmediate);
+  requests.get(1).resolve({ ok: true, results: ['最初の段落。'] });
+  await new Promise(setImmediate);
+  controller.abort();
+  batches.cancel();
+  assert.equal(await first, true);
+  assert.deepEqual(cancelled, [2, 3]);
+  const resumed = queue.run({ ...options, signal: new AbortController().signal });
+  await new Promise(setImmediate);
+  assert.deepEqual([requests.get(4).texts, requests.get(5).texts], [['Second paragraph.'], ['Third paragraph.']]);
+  for (const id of cancelled) requests.get(id).resolve({ ok: true, results: ['古い返事。'] });
+  await new Promise(setImmediate);
+  assert.deepEqual(done, [{ part: ['First paragraph.'], pages: [] }]);
+  for (const id of [4, 5]) requests.get(id).resolve({ ok: true, results: ['再開後の訳文。'] });
+  assert.equal(await resumed, false);
+  assert.deepEqual(done.flatMap(({ pages }) => pages), [0]);
+});
 
 test('UX の完了時刻と網羅率は非表示とスクロール時の対象を分けて数える', () => {
   const inventory = [

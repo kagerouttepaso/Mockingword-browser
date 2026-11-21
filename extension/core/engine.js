@@ -89,6 +89,7 @@ export async function complete(text, options) {
 async function completeOnce(text, options) {
   if (options.requestId && cancelled.has(options.requestId)) throw new CancelledError();
   await ensureOffscreen();
+  if (options.requestId && cancelled.has(options.requestId)) throw new CancelledError();
   const r = await send({
     type: MSG.COMPLETE,
     requestId: options.requestId,

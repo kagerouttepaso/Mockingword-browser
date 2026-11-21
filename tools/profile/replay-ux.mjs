@@ -16,7 +16,7 @@ import { browserStatus, launchUx, prepareMockVariant, prepareSakutto, prepareUxM
 
 const source = fileURLToPath(new URL('../../extension/', import.meta.url));
 const files = { github: 'github-typescript-9998.mhtml', mdn: 'mdn-gpuadapter.mhtml', w3c: 'w3c-proposal.mhtml', wikipedia: 'wikipedia-ko.mhtml' };
-const variantNames = ['default', 'a', 'b', 'ab', 'sakutto'];
+const variantNames = ['default', 'sakutto'];
 const legacy = { width: 1200, height: 800 };
 const snapshot = 'window.__uxReplay.snapshot()';
 const json = (file, value) => fs.writeFileSync(file, JSON.stringify(value, null, 2) + '\n');
@@ -117,7 +117,7 @@ async function measure(testCase, variant, models, parallel, timeoutMs) {
       const finalStatus = await browserStatus(browser, variant, parallel);
       if (finalStatus.parallel !== status.parallel) throw new Error('計測中に同時実行数が変わりました');
       model.assertHealthy();
-      return { case: testCase.id, variant: variant.name, ratio: variant.ratio, limits: variant.limits, fixtureSha256: testCase.sha256,
+      return { case: testCase.id, variant: variant.name, fixtureSha256: testCase.sha256,
         inventorySha256: signature(record), version, extensionVersion: variant.version, gpu, model: model.snapshot(), status, finalStatus, bounds: page.bounds,
         wallMs: Date.now() - launchedAt, native: native || null, record, ux, traces,
         run: { totalMs: ux.totalMs, pairs }, quality: { unchanged: unchangedUxItems(record.inventory),
@@ -133,11 +133,12 @@ export async function runUxReplay(args) {
     fixtures: { type: 'string' }, out: { type: 'string' }, pages: { type: 'string' }, variants: { type: 'string' },
     rounds: { type: 'string', default: '5' }, parallel: { type: 'string', default: '8' }, timeout: { type: 'string', default: '180' },
     sakutto: { type: 'string' }, 'sakutto-model': { type: 'string' }, inventory: { type: 'boolean' },
+    baseline: { type: 'string' },
     'max-only': { type: 'boolean' }, 'max-viewport': { type: 'string' },
     'extra-parallel': { type: 'string' }, 'extra-parallel-pages': { type: 'string' },
   } });
   if (!values.fixtures || !values.out) throw new Error('--fixtures と --out を指定してください（docs/13_ページ翻訳のUX計測.md）');
-  const names = values.inventory ? [] : pickList(values.variants, variantNames, '条件');
+  const names = values.inventory ? [] : pickList(values.variants, values.baseline ? [...variantNames, 'baseline'] : variantNames, '条件');
   const includesSakutto = names.includes('sakutto');
   if (includesSakutto && (!values.sakutto || !values['sakutto-model'])) throw new Error('sakutto の条件では --sakutto と --sakutto-model が必要です');
   const rounds = positive(values.rounds, '回数');
@@ -177,7 +178,7 @@ export async function runUxReplay(args) {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mockingword-ux-'));
   try {
     const baseVariants = names.map((name) => name === 'sakutto' ? prepareSakutto(values.sakutto)
-      : prepareMockVariant(source, name, tempRoot));
+      : prepareMockVariant(name === 'baseline' ? path.resolve(values.baseline) : source, name, tempRoot));
     const models = await prepareUxModels({ mock: names.some((name) => name !== 'sakutto'), source,
       sakuttoFile: includesSakutto ? values['sakutto-model'] : null });
     const suite = {};
@@ -197,7 +198,7 @@ export async function runUxReplay(args) {
           if (result.inventorySha256 !== expected) throw new Error(`${testCase.id} の画面設定または分母が一致しません。原始結果を確認してください`);
           results[variant.name].push(result);
           const { all } = result.ux.counts;
-          console.log(`  画面内 ${fmt(result.ux.initialViewportMs)}・スクロール後 ${fmt(result.ux.scrollFollowMs)}・全体 ${fmt(result.ux.totalMs)}・網羅 ${all.translated}/${all.total}・原文と同じ ${result.quality.unchanged.count}件${result.native ? '' : '・拡張の終了通知なし'}`);
+          console.log(`  最初の文 ${fmt(result.ux.firstViewportSentenceMs)}・画面内の各段落 ${fmt(result.ux.initialParagraphReadMs)}・スクロール後の各段落 ${fmt(result.ux.scrolledParagraphReadMs)}・全体の完了 ${fmt(result.ux.totalMs)}・網羅 ${all.translated}/${all.total}・原文と同じ ${result.quality.unchanged.count}件${result.native ? '' : '・拡張の終了通知なし'}`);
         }
       }
       suite[testCase.id] = summarizeUxRuns(results);

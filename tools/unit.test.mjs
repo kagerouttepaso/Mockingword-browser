@@ -9,23 +9,29 @@ import { analyzeUx, dispatchDiagnostics, median } from './profile/replay-ux-anal
 
 test('UX の完了時刻と網羅率は非表示とスクロール時の対象を分けて数える', () => {
   const inventory = [
-    { id: 1, initial: 'viewport', source: 'Heading', rendered: '見出し', lead: true, completeAt: 110, firstAt: 110 },
-    { id: 2, initial: 'viewport', source: 'Lead', rendered: '第1段落', lead: true, paragraph: true, completeAt: 125, firstAt: 125 },
-    { id: 3, initial: 'shown', source: 'Next', rendered: '次の段落', afterScroll: true, paragraph: true, completeAt: 147, firstAt: 147 },
-    { id: 4, initial: 'hidden', source: 'Menu', rendered: 'Menu', collapsed: true, completeAt: null, firstAt: null },
+    { id: 1, initial: 'viewport', source: 'Heading', rendered: '見出し', lead: true, completeAt: 110, displayChanges: [] },
+    { id: 2, initial: 'viewport', source: 'Lead. Keep reading.', rendered: '最初の文です。続きです。', lead: true, paragraph: true, completeAt: 125,
+      displayChanges: [{ at: 109, text: '最初の文です。 Keep reading.', position: 'viewport' }] },
+    { id: 3, initial: 'shown', source: 'Next', rendered: '次の段落', afterScroll: true, paragraph: true, completeAt: 147,
+      displayChanges: [{ at: 144, text: '次の段落', position: 'viewport' }], evidence: { output: true } },
+    { id: 4, initial: 'hidden', source: 'Menu', rendered: 'Menu', collapsed: true, completeAt: null, displayChanges: [] },
+    { id: 5, initial: 'viewport', source: 'Another.', rendered: '別の段落です。', paragraph: true, completeAt: 125,
+      displayChanges: [{ at: 106, text: 'Another.', position: 'viewport' }, { at: 124, text: '別の段落です。', position: 'viewport' }] },
   ];
   const result = analyzeUx({ startAt: 100, observedAt: 180, scroll: { at: 127 }, inventory,
-    events: [{ at: 110, complete: true }, { at: 125, complete: true }, { at: 147, complete: true }] });
+    events: [{ at: 110, complete: true }, { at: 125, complete: true }, { at: 125, complete: true }, { at: 147, complete: true }] });
   assert.equal(result.initialViewportMs, 25);
   assert.equal(result.headingsAndLeadMs, 25);
-  assert.equal(result.firstParagraphMs, 25);
+  assert.equal(result.firstViewportSentenceMs, 9);
+  assert.equal(result.initialParagraphReadMs, 24);
+  assert.equal(result.scrolledParagraphReadMs, 20);
   assert.equal(result.scrollFollowMs, 20);
   assert.equal(result.shownMs, 47);
   assert.equal(result.totalMs, null);
   assert.deepEqual(result.counts.collapsed, { translated: 0, total: 1 });
   assert.deepEqual(result.coverage, [
-    { ms: 0, translated: 0 }, { ms: 10, translated: 1 }, { ms: 25, translated: 2 },
-    { ms: 47, translated: 3 }, { ms: 80, translated: 3 },
+    { ms: 0, translated: 0 }, { ms: 10, translated: 1 }, { ms: 25, translated: 3 },
+    { ms: 47, translated: 4 }, { ms: 80, translated: 4 },
   ]);
   assert.deepEqual(result.incomplete, [4]);
   assert.equal(median([10, null, 20]), 15);

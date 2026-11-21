@@ -40,14 +40,14 @@ export function installUxRecorder(adapter) {
     return groups;
   }
 
-  function visibility(nodes) {
+  function visibility(nodes, opacityProperty = true) {
     let shown = false;
     for (const node of nodes) {
       if (!norm(node.data)) continue;
       const element = node.parentElement;
       let box = element;
       while (box && getComputedStyle(box).display === 'contents') box = box.parentElement;
-      if (!box?.checkVisibility({ opacityProperty: true, visibilityProperty: true })) continue;
+      if (!box?.checkVisibility({ opacityProperty, visibilityProperty: true })) continue;
       const disclosure = element.closest('details:not([open])');
       if (disclosure && !disclosure.querySelector(':scope > summary')?.contains(element)) continue;
       if (element.closest('.sr-only, .visually-hidden')) continue;
@@ -80,7 +80,7 @@ export function installUxRecorder(adapter) {
         collapsed: nodes.some((node) => {
           const disclosure = node.parentElement.closest('details:not([open])');
           return disclosure && !disclosure.querySelector(':scope > summary')?.contains(node);
-        }), rendered: source, completeAt: null, firstAt: null, afterScroll: false };
+        }), rendered: source, displayChanges: [], completeAt: null, afterScroll: false };
       const sourceFragments = nodes.filter((node) => sourceLetter.test(node.data));
       const fragments = sourceFragments.filter((node) => !node.parentElement.closest('.notranslate'));
       inventory.push(row);
@@ -100,17 +100,21 @@ export function installUxRecorder(adapter) {
   let scroll = null;
   let scrollAttempted = false;
   function updateRow({ row, fragments, notranslate }, nodes, at) {
-    row.rendered = readText(nodes);
+    const rendered = readText(nodes);
+    if (rendered !== row.rendered) {
+      row.rendered = rendered;
+      // DOMに訳文が現れた位置を、その直後に始まるフェードの不透明度とは独立に記録する。
+      row.displayChanges.push({ at, text: rendered, position: visibility(nodes, false) });
+    }
     const evidence = fragments.map((node) => node.isConnected ? adapter.inspect(node) : { marked: false, applied: false });
     const applied = evidence.filter((entry) => entry.applied).length;
     const marked = evidence.filter((entry) => entry.marked).length;
     const output = adapter.hasOutput(nodes);
     const complete = applied > 0 && applied === fragments.length;
     row.evidence = { applied, marked, total: fragments.length, notranslate, output };
-    if (output && applied < marked) row.firstUnconfirmedPaintAt ??= at;
+    if (output && (applied < marked || nodes.some((node) => adapter.isPreview?.(node)))) row.firstUnconfirmedPaintAt ??= at;
     if (complete !== (row.completeAt !== null)) {
       row.completeAt = complete ? at : null;
-      if (complete) row.firstAt ??= at;
       events.push({ at, id: row.id, complete });
     }
   }

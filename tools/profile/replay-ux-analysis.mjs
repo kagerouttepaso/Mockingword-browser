@@ -1,20 +1,53 @@
 import { LOG_SOURCE } from '../../extension/shared/messages.js';
+import { sentenceEnds } from '../../extension/shared/sentences.js';
 import { generation, overlap } from './replay-timeline.mjs';
 
-export const uxMetricKeys = ['initialViewportMs', 'scrollFollowMs', 'headingsAndLeadMs', 'shownMs', 'totalMs', 'firstParagraphMs'];
-const coverageKeys = ['initial', 'scrolled', 'headingsAndLead', 'shown', 'all', 'paragraphs'];
+const metricCoverage = {
+  initialParagraphReadMs: 'initialParagraphs', scrolledParagraphReadMs: 'scrolledParagraphs',
+  initialParagraphDoneMs: 'initialParagraphs', scrolledParagraphDoneMs: 'scrolledParagraphs',
+  initialViewportMs: 'initial', scrollFollowMs: 'scrolled', headingsAndLeadMs: 'headingsAndLead', shownMs: 'shown',
+  totalMs: 'all', firstViewportSentenceMs: 'initial',
+};
+export const uxMetricKeys = Object.keys(metricCoverage);
+const japanese = /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u;
+
+function hasTranslatedSentence(source, display) {
+  let start = 0;
+  for (const end of sentenceEnds(display)) {
+    const sentence = display.slice(start, end).trim();
+    if (japanese.test(sentence) && !source.includes(sentence)) return true;
+    start = end;
+  }
+  return false;
+}
+
+function sentenceTimes(row) {
+  const changes = row.displayChanges;
+  const found = changes.filter(({ text, position }) => position !== 'hidden' && hasTranslatedSentence(row.source, text));
+  const fallback = row.paragraph && row.completeAt !== null && row.evidence?.output && !sentenceEnds(row.rendered).length;
+  const finalPosition = changes.at(-1)?.position ?? row.initial;
+  return {
+    readable: found[0]?.at ?? (fallback && finalPosition !== 'hidden' ? row.completeAt : null),
+    viewport: found.find(({ position }) => position === 'viewport')?.at ?? (fallback && finalPosition === 'viewport' ? row.completeAt : null),
+  };
+}
 
 export function analyzeUx({ startAt, observedAt, scroll, inventory, events }) {
   const elapsed = (at, origin = startAt) => Math.round(at - origin);
-  const finished = (set, origin = startAt) => set.length && set.every((row) => row.completeAt !== null)
-    ? Math.max(0, elapsed(Math.max(...set.map((row) => row.completeAt)), origin)) : null;
+  const latest = (times, origin) => times.length && times.every(Number.isFinite)
+    ? Math.max(0, elapsed(Math.max(...times), origin)) : null;
+  const finished = (set, origin) => latest(set.map((row) => row.completeAt), origin);
   const initial = inventory.filter((row) => row.initial === 'viewport');
   const shown = inventory.filter((row) => row.initial !== 'hidden');
   const hidden = inventory.filter((row) => row.initial === 'hidden');
   const scrolled = inventory.filter((row) => row.afterScroll);
   const collapsed = inventory.filter((row) => row.collapsed);
   const paragraphs = inventory.filter((row) => row.paragraph);
-  const completedParagraphs = paragraphs.filter((row) => row.firstAt !== null);
+  const initialParagraphs = initial.filter((row) => row.paragraph);
+  const scrolledParagraphs = scrolled.filter((row) => row.paragraph);
+  const times = new Map(inventory.map((row) => [row, sentenceTimes(row)]));
+  const firstInViewport = [...times.values()].map(({ viewport }) => viewport)
+    .filter((at) => at !== null && (!scroll || at <= scroll.at));
   const counts = (set) => ({ translated: set.filter((row) => row.completeAt !== null).length, total: set.length });
   let translated = 0;
   const coverage = [{ ms: 0, translated: 0 }];
@@ -26,11 +59,16 @@ export function analyzeUx({ startAt, observedAt, scroll, inventory, events }) {
   }
   if (coverage.at(-1).ms < elapsed(observedAt)) coverage.push({ ms: elapsed(observedAt), translated });
   return {
+    initialParagraphReadMs: latest(initialParagraphs.map((row) => times.get(row).readable)),
+    scrolledParagraphReadMs: scroll ? latest(scrolledParagraphs.map((row) => times.get(row).readable), scroll.at) : null,
+    initialParagraphDoneMs: finished(initialParagraphs),
+    scrolledParagraphDoneMs: scroll ? finished(scrolledParagraphs, scroll.at) : null,
     initialViewportMs: finished(initial), scrollFollowMs: scroll ? finished(scrolled, scroll.at) : null,
     headingsAndLeadMs: finished(initial.filter((row) => row.lead)), shownMs: finished(shown), totalMs: finished(inventory),
-    firstParagraphMs: completedParagraphs.length ? elapsed(Math.min(...completedParagraphs.map((row) => row.firstAt))) : null,
+    firstViewportSentenceMs: firstInViewport.length ? elapsed(Math.min(...firstInViewport)) : null,
     counts: { all: counts(inventory), hidden: counts(hidden), collapsed: counts(collapsed), shown: counts(shown),
-      initial: counts(initial), scrolled: counts(scrolled), headingsAndLead: counts(initial.filter((row) => row.lead)), paragraphs: counts(paragraphs) },
+      initial: counts(initial), scrolled: counts(scrolled), headingsAndLead: counts(initial.filter((row) => row.lead)), paragraphs: counts(paragraphs),
+      initialParagraphs: counts(initialParagraphs), scrolledParagraphs: counts(scrolledParagraphs) },
     coverage, scroll: scroll ? { ...scroll, ms: elapsed(scroll.at) } : null,
     incomplete: inventory.filter((row) => row.completeAt === null).map((row) => row.id),
   };
@@ -97,11 +135,11 @@ export function summarizeUxRuns(results) {
   return Object.fromEntries(Object.entries(results).map(([name, runs]) => [name, {
     rounds: runs.length, nativeCompleted: runs.filter((run) => run.native).length,
     coverage: runs.map((run) => run.ux.counts.all),
-    ms: Object.fromEntries(uxMetricKeys.map((key, index) => {
+    ms: Object.fromEntries(uxMetricKeys.map((key) => {
       const values = runs.map((run) => run.ux[key]);
       const misses = runs.flatMap((run, round) => values[round] === null ? [{ round: round + 1,
-        coverage: run.ux.counts[coverageKeys[index]], all: run.ux.counts.all,
-        ...(key === 'scrollFollowMs' && !run.ux.scroll ? { notScrolled: true } : {}) }] : []);
+        coverage: run.ux.counts[metricCoverage[key]], all: run.ux.counts.all,
+        ...(['scrollFollowMs', 'scrolledParagraphReadMs', 'scrolledParagraphDoneMs'].includes(key) && !run.ux.scroll ? { notScrolled: true } : {}) }] : []);
       return [key, { reached: runs.length - misses.length, ...range(values), misses }];
     })),
     unchanged: range(runs.map((run) => run.quality.unchanged.count)),

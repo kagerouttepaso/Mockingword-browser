@@ -1,5 +1,5 @@
 export function mockingwordObservation(state) {
-  const original = '[data-plamo-orig=done], [data-plamo-hide]';
+  const original = '[data-plamo-orig=done], [data-plamo-orig=partial], [data-plamo-hide]';
   return {
     original,
     attributes: ['data-plamo-orig', 'data-plamo-hide'],
@@ -12,6 +12,7 @@ export function mockingwordObservation(state) {
       return { marked, applied };
     },
     hasOutput: (nodes) => nodes.some((node) => node.data.trim() && node.parentElement.closest('.plamo-tr')),
+    isPreview: (node) => !!node.parentElement.closest('.plamo-tr[data-plamo-partial]'),
   };
 }
 

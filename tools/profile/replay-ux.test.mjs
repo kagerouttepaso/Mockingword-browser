@@ -43,9 +43,9 @@ test('sakuttoは途中表示や保留解除だけでなく、確定時に書き�
 test('完了は原文との一致に依存せず、未到達は到達時間の範囲に混ぜない', () => {
   const makeRun = (at) => {
     const inventory = [
-      { id: 1, tag: 'p', initial: 'viewport', lead: true, paragraph: true, afterScroll: true, source: 'Same', rendered: 'Same', completeAt: at, firstAt: at,
+      { id: 1, tag: 'p', initial: 'viewport', lead: true, paragraph: true, afterScroll: true, source: 'Same', rendered: 'Same', completeAt: at, displayChanges: [],
         evidence: { output: true } },
-      { id: 2, tag: 'div', initial: 'hidden', source: 'Unset', rendered: 'Unset', completeAt: null, firstAt: null },
+      { id: 2, tag: 'div', initial: 'hidden', source: 'Unset', rendered: 'Unset', completeAt: null, displayChanges: [] },
     ];
     const ux = analyzeUx({ startAt: 100, observedAt: 300, scroll: { at: 230 }, inventory,
       events: at === null ? [] : [{ at, id: 1, complete: true }] });

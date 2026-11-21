@@ -7,7 +7,6 @@ import { fileSha256, prepareModelCache } from '../lib/model-cache.mjs';
 import { installModelInterception } from '../lib/model-cache-cdp.mjs';
 import { sendBrowserAltA } from '../lib/windows-shortcut.mjs';
 
-const variants = { default: [0, [1]], a: [0.5, [1]], b: [0, [1, 4]], ab: [0.5, [1, 4]] };
 const sakuttoId = 'plamo-3-translate-0.8b-q4_k_m';
 const sakuttoUrl = 'https://huggingface.co/pfnet/plamo-3-translate-0.8b-GGUF/resolve/dbeb0856cb0b004b484f190bb71dd65876297013/plamo-3-translate-0.8b-Q4_K_M.gguf';
 const sakuttoSha = '923b2f28a9856de1b8b3b610a7e59ded0b14d007466fd5dd526e6a9ecaadafdd';
@@ -16,23 +15,19 @@ function instrument(extension, relative, replacements) {
   const file = path.join(extension, relative);
   let text = fs.readFileSync(file, 'utf8');
   for (const [from, to] of replacements) {
-    if (text.split(from).length !== 2) throw new Error(`計測の差し込み位置が1か所ではありません: ${relative} / ${from}`);
-    text = text.replace(from, () => to);
+    const count = typeof from === 'string' ? text.split(from).length - 1 : [...text.matchAll(from)].length;
+    if (count !== 1) throw new Error(`計測の差し込み位置が1か所ではありません: ${relative} / ${from}`);
+    text = text.replace(from, typeof to === 'function' ? to : () => to);
   }
   fs.writeFileSync(file, text);
 }
 
 export function prepareMockVariant(source, name, tempRoot) {
-  const [ratio, limits] = variants[name];
   const extension = path.join(tempRoot, name);
   fs.cpSync(source, extension, { recursive: true });
-  instrument(extension, 'shared/page-dispatch.js', [
-    ['const PAGE_SEND_AHEAD_RATIO = 0;', `const PAGE_SEND_AHEAD_RATIO = ${ratio};`],
-    ['const PAGE_STARTUP_LIMITS = [1];', `const PAGE_STARTUP_LIMITS = ${JSON.stringify(limits)};`],
-  ]);
-  instrument(extension, 'page/queue.js', [['const chunk = nextChunk();', `const selectedAt = performance.now();
+  instrument(extension, 'page/queue.js', [[/const chunk = nextChunk\([^\n]*\);/g, (selection) => `const selectedAt = performance.now();
     const pending = state.pending.size;
-    const chunk = nextChunk();
+    ${selection}
     trace('送信対象選択', { selectedAt: performance.timeOrigin + selectedAt, ms: performance.now() - selectedAt, pending, selected: chunk.length });`]]);
   instrument(extension, 'page/state.js', [['data: { ...data, page: location.hostname }',
     'data: { ...data, page: location.hostname, pageAt: performance.timeOrigin + performance.now(), pagePending: state.pending.size }']]);
@@ -43,7 +38,7 @@ export function prepareMockVariant(source, name, tempRoot) {
     acquiredAt: performance.timeOrigin + acquired,
     releasedAt: performance.timeOrigin + released,`],
   ]);
-  return { extension, name, ratio, limits, version: JSON.parse(fs.readFileSync(path.join(extension, 'manifest.json'), 'utf8')).version };
+  return { extension, name, version: JSON.parse(fs.readFileSync(path.join(extension, 'manifest.json'), 'utf8')).version };
 }
 
 export async function prepareUxModels({ mock, sakuttoFile, source }) {

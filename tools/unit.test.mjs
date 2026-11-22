@@ -2,6 +2,7 @@
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { pageReadable, runaway, splitLong, untranslated } from '../extension/shared/text.js';
+import { classifyFontFamily, DEFAULT_PAGE_FONTS, normalizePageFonts, pickFontWeights } from '../extension/shared/fonts.js';
 import { translateBatch } from '../extension/core/translator.js';
 import { streamPartial } from '../extension/core/engine.js';
 import { decode, encode, previewLine, remainingSource } from '../extension/shared/markup.js';
@@ -354,4 +355,26 @@ test('untranslated：短い英字のバッジだけの行は、英語のまま�
 test('pageReadable：HTML・XML・テキストの文書だけページ側の部品を使う。PDF・画像は内蔵ビューアの文書として扱う', () => {
   for (const t of ['text/html', 'application/xhtml+xml', 'image/svg+xml', 'application/xml', 'text/plain', '']) assert.equal(pageReadable(t), true, t);
   for (const t of ['application/pdf', 'image/png', 'video/mp4']) assert.equal(pageReadable(t), false, t);
+});
+
+test('classifyFontFamily：元の font-family から4系統を判定し、日本語フォント指定済みの要素は上書きしない', () => {
+  assert.equal(classifyFontFamily('"OpenTUI Mono", "OpenTUI Mono Menlo", monospace').category, 'mono');
+  assert.equal(classifyFontFamily('Inter, -apple-system, sans-serif').category, 'sans');
+  assert.equal(classifyFontFamily('Georgia, "Times New Roman", serif').category, 'serif');
+  assert.equal(classifyFontFamily('"Nunito", sans-serif').category, 'rounded');
+  assert.equal(classifyFontFamily('"CustomBrandFont", sans-serif').ambiguous, true);
+  assert.equal(classifyFontFamily('"Inter", "Noto Sans JP", sans-serif').category, null);
+  assert.equal(classifyFontFamily('"Hiragino Sans", sans-serif').category, null);
+});
+
+test('normalizePageFonts・pickFontWeights：不正な値を既定へ戻し、空文字（指定しない）を保つ', () => {
+  assert.deepEqual(normalizePageFonts({ enabled: false, mono: '', sans: 'BAD ID!' }), {
+    ...DEFAULT_PAGE_FONTS,
+    enabled: false,
+    mono: '',
+    sans: DEFAULT_PAGE_FONTS.sans,
+  });
+  assert.deepEqual(pickFontWeights([100, 300, 400, 500, 700, 900]), [400, 700]);
+  assert.deepEqual(pickFontWeights([400]), [400]);
+  assert.deepEqual(pickFontWeights([300, 600]), [300, 600]);
 });

@@ -5,6 +5,7 @@ import { LOG_SOURCE, LOG_TAG, MSG, OFFSCREEN, PDF_BATCH_PORT } from '../shared/m
 import { CancelledError, cancel, forget, previewRows, status, streamPartial, unload } from '../core/engine.js';
 import { lookupCached, translateBatch, translateLines, translateText } from '../core/translator.js';
 import { clear as clearCache, stats as cacheStats } from '../core/cache.js';
+import { clearFontCache, fontCacheStats, getFontCatalog, loadPageFont } from '../core/fonts.js';
 import { migrate, settings } from './config.js';
 import { addLog, clearLogs, logs } from './logs.js';
 import { lastUse, markUse, startIdleCheck } from './idle.js';
@@ -107,6 +108,19 @@ const handlers = {
   },
   async [MSG.CACHE_CLEAR]() {
     await clearCache();
+    return { ok: true };
+  },
+  async [MSG.FONT_CATALOG](message) {
+    return getFontCatalog(!!message.refresh);
+  },
+  async [MSG.FONT_LOAD](message) {
+    return loadPageFont(message.fontId);
+  },
+  async [MSG.FONT_CACHE_STATS]() {
+    return { ok: true, ...(await fontCacheStats()) };
+  },
+  async [MSG.FONT_CACHE_CLEAR]() {
+    await clearFontCache();
     return { ok: true };
   },
   async [MSG.LOG](message, sender) {

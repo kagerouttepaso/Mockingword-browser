@@ -26,6 +26,10 @@ export const MSG = {
   PAGE_KIND: 'page-kind', // { tabId } → { viewer, pdf }：内蔵ビューアで表示している文書（PDF など）か、そのうち PDF か
   CACHE_CLEAR: 'cache-clear',
   CACHE_STATS: 'cache-stats', // → { count, bytes, limit, usage }
+  FONT_CATALOG: 'font-catalog', // { refresh? } → { ok, fonts, cached, offline }
+  FONT_LOAD: 'font-load', // { fontId } → { ok, id, faces: [{ weight, data }] }
+  FONT_CACHE_STATS: 'font-cache-stats', // → { ok, count, bytes }
+  FONT_CACHE_CLEAR: 'font-cache-clear',
   LOGS_GET: 'logs-get',
   LOGS_CLEAR: 'logs-clear',
   SPEED_TEST: 'speed-test', // → { ok, row }：今の設定で速さを測る

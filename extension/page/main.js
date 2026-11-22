@@ -202,10 +202,10 @@ function observe() {
       }
       roots.clear();
       for (const para of changed) {
-        const { text, plain, marks, hide, root } = markup(para.element, para.nodes.filter((n) => n.isConnected));
+        const { text, plain, marks, hide, root, fontFamily } = markup(para.element, para.nodes.filter((n) => n.isConnected));
         if (text !== para.text && worthTranslating(plain) && (para.changes = (para.changes ?? 0) + 1) <= MAX_CHANGES) {
           clearPartial(para);
-          Object.assign(para, { text, marks, hide, root });
+          Object.assign(para, { text, marks, hide, root, fontFamily });
           added.push(para);
         }
       }

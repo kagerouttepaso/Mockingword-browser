@@ -128,15 +128,17 @@ export function readParagraph(block, nodes) {
     return owned;
   };
   walk(root);
-  return { tokens, marks, hide, root };
+  // 書き込み段で getComputedStyle を呼ぶと大量のキャッシュ適用時に強制レイアウト再計算（Layout Thrashing）が起きるため、
+  // 読み取り段の lookCache から fontFamily を一緒に渡す。
+  return { tokens, marks, hide, root, fontFamily: lookOf(root)[2] };
 }
 
 /**
- * 段落を、モデルに渡すマーカー付きの1行にする。返すもの：text・plain（shared/markup.js の encode）と、marks・hide・root（readParagraph）。
+ * 段落を、モデルに渡すマーカー付きの1行にする。返すもの：text・plain（shared/markup.js の encode）と、marks・hide・root・fontFamily（readParagraph）。
  * 以前はリンクとコードだけを名指しで拾い、原文は文字だけを隠していたので、名簿に無い要素が訳文から消え（太字・改行）、
  * 文字以外の中身が訳文表示で残っていた（コードの空の箱、<br> の空行）。2026-11-16、要素の種類ごとの対処をやめてこの流れにした。
  */
 export function markup(block, nodes) {
-  const { tokens, marks, hide, root } = readParagraph(block, nodes);
-  return { ...encode(tokens), marks, hide, root };
+  const { tokens, marks, hide, root, fontFamily } = readParagraph(block, nodes);
+  return { ...encode(tokens), marks, hide, root, fontFamily };
 }

@@ -14,8 +14,8 @@ export const FONT_CATEGORIES = [
     id: 'mono',
     label: '等幅（ターミナル・コード風）',
     hint: 'OpenTUI Mono・JetBrains Mono・Consolas などの等幅フォント',
-    defaultId: 'm-plus-1-code',
-    recommended: ['m-plus-1-code', 'biz-udgothic', 'dotgothic16', 'ibm-plex-sans-jp'],
+    defaultId: 'dotgothic16',
+    recommended: ['dotgothic16', 'm-plus-1-code', 'biz-udgothic', 'ibm-plex-sans-jp'],
   },
   {
     id: 'serif',
@@ -28,17 +28,17 @@ export const FONT_CATEGORIES = [
     id: 'rounded',
     label: '丸ゴシック（柔らかい書体）',
     hint: 'Nunito・Quicksand などの丸みのあるフォント',
-    defaultId: 'm-plus-rounded-1c',
-    recommended: ['m-plus-rounded-1c', 'line-seed-jp', 'zen-maru-gothic', 'kosugi-maru', 'tsukimi-rounded'],
+    defaultId: 'line-seed-jp',
+    recommended: ['line-seed-jp', 'm-plus-rounded-1c', 'zen-maru-gothic', 'kosugi-maru', 'tsukimi-rounded'],
   },
 ];
 
 export const DEFAULT_PAGE_FONTS = {
   enabled: true,
   sans: 'noto-sans-jp',
-  mono: 'm-plus-1-code',
+  mono: 'dotgothic16',
   serif: 'noto-serif-jp',
-  rounded: 'm-plus-rounded-1c',
+  rounded: 'line-seed-jp',
 };
 
 /** オフライン時やカタログ未取得時にも使える、おすすめフォントの基本情報。 */
@@ -119,9 +119,12 @@ const MONO_RE = /(?:^|[\s_-])(monospace|ui-monospace|mono|code|console|terminal|
 
 const ROUNDED_RE = /(?:^|[\s_-])(rounded|ui-rounded|nunito|quicksand|fredoka|varela\s*round|comfortaa|baloo|rubik|comic\s*sans)(?:$|[\s_-])/i;
 
-const SERIF_RE = /(?:^|[\s_-])(ui-serif|georgia|times|garamond|merriweather|playfair|lora|baskerville|caslon|crimson|palatino|cambria|charter|bookman|didot|bodoni|newsreader|literata|spectral|bitter|vollkorn|pt\s*serif|source\s*serif|noto\s*serif)(?:$|[\s_-])/i;
+const SERIF_RE = /(?:^|[\s_-])(serif|ui-serif|georgia|times|garamond|merriweather|playfair|lora|baskerville|caslon|crimson|palatino|cambria|charter|bookman|didot|bodoni|newsreader|literata|spectral|bitter|vollkorn)(?:$|[\s_-])/i;
 
 const GENERIC_FAMILIES = new Set(['serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'system-ui', 'ui-serif', 'ui-sans-serif', 'ui-monospace', 'ui-rounded', 'emoji', 'math', 'fangsong']);
+
+/** camelCase の独自フォント名（anthropicSerif 等）を単語区切りへそろえる。 */
+const splitWords = (name) => name.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
 
 /** CSS の font-family 文字列をカンマ区切りのファミリー名配列へ分解する。 */
 export function parseFontFamily(fontFamily) {
@@ -134,7 +137,7 @@ export function parseFontFamily(fontFamily) {
 
 /** 元の CSS にすでに日本語フォントが明示指定されているか。 */
 export function hasJapaneseFont(fontFamily) {
-  return parseFontFamily(fontFamily).some((name) => JAPANESE_FONT_RE.test(name));
+  return parseFontFamily(fontFamily).some((name) => JAPANESE_FONT_RE.test(splitWords(name)));
 }
 
 /**
@@ -147,20 +150,21 @@ export function hasJapaneseFont(fontFamily) {
 export function classifyFontFamily(fontFamily) {
   const names = parseFontFamily(fontFamily);
   if (names.length === 0) return { category: 'sans', ambiguous: false };
-  if (names.some((name) => JAPANESE_FONT_RE.test(name))) return { category: null, ambiguous: false };
+  if (names.some((name) => JAPANESE_FONT_RE.test(splitWords(name)))) return { category: null, ambiguous: false };
 
   let decided = null;
   for (const raw of names) {
     const lower = raw.toLowerCase();
-    if (lower === 'monospace' || lower === 'ui-monospace' || MONO_RE.test(lower)) {
+    const words = splitWords(raw);
+    if (lower === 'monospace' || lower === 'ui-monospace' || MONO_RE.test(words)) {
       decided = 'mono';
       break;
     }
-    if (lower === 'ui-rounded' || ROUNDED_RE.test(lower)) {
+    if (lower === 'ui-rounded' || ROUNDED_RE.test(words)) {
       decided = 'rounded';
       break;
     }
-    if (lower === 'serif' || lower === 'ui-serif' || (SERIF_RE.test(lower) && !/sans-serif/.test(lower))) {
+    if (lower === 'serif' || lower === 'ui-serif' || (SERIF_RE.test(words) && !/sans[\s_-]?serif/.test(words))) {
       decided = 'serif';
       break;
     }

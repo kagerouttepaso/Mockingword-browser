@@ -27,8 +27,8 @@ export const FONT_CATEGORIES = [
     id: 'mono',
     label: '等幅（ターミナル・コード風）',
     hint: 'OpenTUI Mono・JetBrains Mono・Consolas などの等幅フォント',
-    defaultId: 'x12y16px-maru-monica',
-    recommended: ['x12y16px-maru-monica', 'dotgothic16', 'm-plus-1-code', 'biz-udgothic', 'ibm-plex-sans-jp'],
+    defaultId: 'dotgothic16',
+    recommended: ['dotgothic16', 'x12y16px-maru-monica', 'm-plus-1-code', 'biz-udgothic', 'ibm-plex-sans-jp'],
   },
   {
     id: 'serif',
@@ -49,7 +49,7 @@ export const FONT_CATEGORIES = [
 export const DEFAULT_PAGE_FONTS = {
   enabled: true,
   sans: 'noto-sans-jp',
-  mono: 'x12y16px-maru-monica',
+  mono: 'dotgothic16',
   serif: 'noto-serif-jp',
   rounded: 'line-seed-jp',
 };

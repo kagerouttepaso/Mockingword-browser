@@ -2,7 +2,7 @@
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { pageReadable, runaway, splitLong, untranslated } from '../extension/shared/text.js';
-import { classifyFontFamily, DEFAULT_PAGE_FONTS, normalizePageFonts, pickFontWeights } from '../extension/shared/fonts.js';
+import { classifyFontFamily, DEFAULT_PAGE_FONTS, fontFileSpec, normalizePageFonts, pickFontWeights } from '../extension/shared/fonts.js';
 import { translateBatch } from '../extension/core/translator.js';
 import { streamPartial } from '../extension/core/engine.js';
 import { decode, encode, previewLine, remainingSource } from '../extension/shared/markup.js';
@@ -380,4 +380,9 @@ test('normalizePageFonts・pickFontWeights：不正な値を既定へ戻し、�
   assert.deepEqual(pickFontWeights([100, 300, 400, 500, 700, 900]), [400, 700]);
   assert.deepEqual(pickFontWeights([400]), [400]);
   assert.deepEqual(pickFontWeights([300, 600]), [300, 600]);
+  assert.deepEqual(fontFileSpec('x12y16px-maru-monica', 400), {
+    url: 'https://hicchicc.github.io/00ff/x12y16pxMaruMonica.ttf',
+    contentType: 'font/ttf',
+  });
+  assert.equal(fontFileSpec('noto-sans-jp', 400).contentType, 'font/woff2');
 });

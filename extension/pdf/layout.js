@@ -7,7 +7,7 @@ const NO_END = /[（「『【〔“‘(\[]$/u;
 const ATOM = /[\x21-\x7e -ɏ–’µ®°×]+|\s+|./gu;
 
 /**
- * 書式つきの断片 [{ text, bold, link }] を幅 width（pt）で行に分ける。measure(text, bold, size) → 幅。
+ * 書式つきの断片 [{ text, bold, link, source }] を幅 width（pt）で行に分ける。measure(text, bold, size) → 幅。
  * 返す値：行の配列。行は [{ s, w, pc }]（pc＝元の断片）。
  */
 export function layout(pieces, width, size, measure) {
@@ -25,9 +25,10 @@ export function layout(pieces, width, size, measure) {
     if (a.s === ' ' && !line.length) continue;
     if (w + a.w > width && line.length) {
       if (a.s === ' ') { lines.push([]); w = 0; continue; }
-      if (NO_START.test(a.s) && a.s.length <= 2) { line.push(a); w += a.w; continue; }
+      if (NO_START.test(a.s) && a.s.length <= 2 && line.at(-1).pc.source === a.pc.source) { line.push(a); w += a.w; continue; }
       const carry = [];
-      while (line.length > 1 && NO_END.test(line.at(-1).s)) carry.unshift(line.pop());
+      // 残りの原文を足しても、すでに置いた訳文の行は変えない。
+      while (line.length > 1 && line.at(-1).pc.source === a.pc.source && NO_END.test(line.at(-1).s)) carry.unshift(line.pop());
       while (line.at(-1)?.s === ' ') line.pop();
       lines.push([...carry, a]);
       w = carry.reduce((sum, x) => sum + x.w, 0) + a.w;

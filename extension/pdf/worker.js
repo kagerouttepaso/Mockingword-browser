@@ -4,9 +4,8 @@
 // 画面 → Worker：{ type: 'open', bytes }・{ type: 'start', parallel }（中止した後は続きから）・{ type: 'stop' }・{ type: 'focus', page }・
 //   { type: 'partial', id, lines }・{ type: 'translated', id, results | error }・{ type: 'save' }
 // Worker → 画面：{ type: 'opened', paragraphs }・{ type: 'translate', id, texts }・{ type: 'status', list, status }・
-//   { type: 'preview', list }・{ type: 'version', bytes, pages }・{ type: 'titles', entries }・{ type: 'stage', stage, done, total }・
+//   { type: 'preview', list }・{ type: 'fonts' }・{ type: 'version', bytes, pages }・{ type: 'titles', entries }・{ type: 'stage', stage, done, total }・
 //   { type: 'done', stats }・{ type: 'saved', result }・{ type: 'error', during, message }
-import { paragraphBox } from './plan.js';
 import { openPdfJob } from './translate.js';
 
 let job = null;
@@ -16,8 +15,8 @@ const waiting = new Map();
 
 /** 画面へ渡す段落の位置・色・書式と、確定した段落の訳文。 */
 const brief = (p, status) => ({
-  id: p.id, page: p.page, box: paragraphBox(p), background: p.background, color: p.color,
-  size: p.size, lead: p.lead, pieces: status === 'done' ? p.pieces : [],
+  id: p.id, page: p.page, geometry: p.geometry, background: p.background, color: p.color,
+  pieces: status === 'done' ? p.pieces : [],
 });
 
 function translate(texts, signal, onPartial) {
@@ -53,7 +52,10 @@ async function start(parallel) {
 onmessage = async ({ data: m }) => {
   try {
     if (m.type === 'open') {
-      job = await openPdfJob(m.bytes, { onFontProgress: (done, total) => postMessage({ type: 'stage', stage: 'font', done, total }) });
+      job = await openPdfJob(m.bytes, {
+        onFontProgress: (done, total) => postMessage({ type: 'stage', stage: 'font', done, total }),
+        onFontsReady: () => postMessage({ type: 'fonts' }),
+      });
       postMessage({ type: 'opened', paragraphs: job.paras.filter((p) => !p.skip).length });
     } else if (m.type === 'start') start(m.parallel);
     else if (m.type === 'stop') job?.stop();

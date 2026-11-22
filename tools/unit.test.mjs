@@ -6,11 +6,25 @@ import { translateBatch } from '../extension/core/translator.js';
 import { streamPartial } from '../extension/core/engine.js';
 import { decode, encode, previewLine, remainingSource } from '../extension/shared/markup.js';
 import { LOG_SOURCE, MSG, PDF_BATCH_PORT } from '../extension/shared/messages.js';
+import { paragraphGeometry, planParagraph } from '../extension/pdf/plan.js';
 import { createPdfQueue } from '../extension/pdf/queue.js';
 import { createPdfBatchRequests } from '../extension/ui/pdf-batches.js';
 import { analyzeUx, dispatchDiagnostics, median } from './profile/replay-ux-analysis.mjs';
 
 const pdfParas = (...texts) => texts.map((text) => ({ text, plain: text, size: 12, lines: 1 }));
+
+test('PDFの途中表示は原文の残りを足しても、狭い段落に収めた訳文の配置を保つ', () => {
+  const paragraph = { x0: 10, y: 50, bottom: 50, right: 59, size: 10, lead: 12, lines: 1, objs: ['0'],
+    chars: [{ tr: true, l: 10, r: 40, b: 48, t: 58 }] };
+  const geometry = paragraphGeometry(paragraph, [paragraph]);
+  const measure = (text, _bold, size) => text.length * size;
+  const translation = [{ text: 'ファームウェア', bold: true, link: null }];
+  const result = planParagraph(geometry, translation, measure);
+  const preview = planParagraph(geometry, [...translation, { text: ' Remaining source', bold: true, source: true }], measure);
+  assert.equal(result.size, 7);
+  assert.equal(result.lines[0].runs[0].s, 'ファームウェア');
+  assert.deepEqual(preview, result);
+});
 
 test('PDFのバッチの返事が逆順でも、段落がそろったページは1回だけ書く', async () => {
   const queue = createPdfQueue(new Map([

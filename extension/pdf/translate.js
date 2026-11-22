@@ -5,8 +5,8 @@ import { decode, previewLine, remainingSource } from '../shared/markup.js';
 import { addBackgrounds } from './background.js';
 import { extractParagraphs } from './extract.js';
 import { finishPdf } from './finish.js';
-import { loadFonts } from './fonts.js';
-import { paragraphBox } from './plan.js';
+import { loadFonts, measureWithFonts } from './fonts.js';
+import { paragraphBox, paragraphGeometry } from './plan.js';
 import { openPdf } from './pdfium.js';
 import { createPdfQueue, paragraphsByPage } from './queue.js';
 import { titleTranslations } from './titles.js';
@@ -25,7 +25,7 @@ const SAVE_SHARE = 4;
  *   paras（段落。pdf/extract.js。p.id は段落の番号）・run(...)・save()・close()
  * onFontProgress(読んだバイト数, 全体) でフォントの取得の進み具合を知らせる。
  */
-export async function openPdfJob(bytes, { onFontProgress } = {}) {
+export async function openPdfJob(bytes, { onFontProgress, onFontsReady } = {}) {
   const doc = await openPdf(bytes);
   const t0 = performance.now();
   let paras;
@@ -38,7 +38,7 @@ export async function openPdfJob(bytes, { onFontProgress } = {}) {
   paras.forEach((p, i) => { p.id = i; });
   const readMs = Math.round(performance.now() - t0);
   const fonts = loadFonts(onFontProgress);
-  fonts.catch(() => {}); // 失敗は使う側の await で受ける
+  fonts.then(() => onFontsReady?.(), () => {}); // 失敗は使う側の await で受ける
   const pages = paragraphsByPage(paras);
   const queue = createPdfQueue(pages);
   const byText = new Map();
@@ -88,7 +88,7 @@ export async function openPdfJob(bytes, { onFontProgress } = {}) {
       const writeFinished = async (finished) => {
         const loaded = await fonts;
         handles ??= embedFonts(doc, loaded);
-        const measure = (s, bold, size) => loaded[bold ? 'bold' : 'regular'].measure(s, size);
+        const measure = measureWithFonts(loaded);
         const t = performance.now();
         for (const pi of finished) {
           const all = pages.get(pi);
@@ -113,7 +113,10 @@ export async function openPdfJob(bytes, { onFontProgress } = {}) {
             const working = part.flatMap((text) => byText.get(text));
             const touched = new Set(working.map((p) => p.page));
             addBackgrounds(doc, [...touched].flatMap((pi) => pages.get(pi).filter((p) => !p.skip)), paragraphBox);
-            for (const p of working) active.add(p);
+            for (const p of working) {
+              p.geometry ??= paragraphGeometry(p, pages.get(p.page));
+              active.add(p);
+            }
             onStatus(working, 'working');
             return translate(part, signal, (lines) => {
               if (signal.aborted) return;

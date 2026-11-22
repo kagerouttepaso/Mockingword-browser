@@ -4,25 +4,31 @@
 // 層はページごとに1つの要素で、作ったら捨てずに使う。座標はページに対する割合なので、拡大縮小しても描き直さない。
 // pdf.js はページを描き直すとき（拡大縮小・見えなくなったページの破棄・ページの差し替え）にページの要素の子を消すので、
 // ページの要素の子の変化を見て層をページへ置き直す。
-import { fitLines } from '../pdf/plan.js';
+import { loadFonts, measureWithFonts, PDF_FONT_FAMILY } from '../pdf/fonts.js';
+import { planParagraph } from '../pdf/plan.js';
+
+function svg(tag, attrs) {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [key, value] of Object.entries(attrs)) el.setAttribute(key, value);
+  return el;
+}
 
 export function createOverlay(store, viewer) {
   const layers = new Map(); // ページの番号 → { el, observer }
   const context = document.createElement('canvas').getContext('2d');
-  const measure = (text, bold, size) => {
+  let measure = (text, bold, size) => {
     context.font = `${bold ? 700 : 400} 100px sans-serif`;
     return context.measureText(text).width * size / 100;
   };
-  const px = (points) => `calc(${points}px * var(--scale-factor))`;
+  let family = 'sans-serif';
+  let fontLoad;
 
   function layerOf(pi) {
     let layer = layers.get(pi);
     if (layer) return layer.el;
     const div = viewer.getPageView(pi)?.div;
     if (!div) return null;
-    const el = document.createElement('div');
-    el.className = 'mw-layer';
-    el.setAttribute('aria-hidden', 'true');
+    const el = svg('svg', { class: 'mw-layer', 'aria-hidden': 'true', preserveAspectRatio: 'none' });
     const observer = new MutationObserver(() => { if (el.parentNode !== div) div.append(el); });
     observer.observe(div, { childList: true });
     div.append(el);
@@ -38,35 +44,19 @@ export function createOverlay(store, viewer) {
     layers.clear();
   }
 
-  function renderText(el, mark, width, height) {
-    // 画面のフォントで字幅を測る。PDFに埋め込むフォントの取得を待たずに描く。
-    const { size, lead, lines } = fitLines(mark.pieces, width, mark.size, mark.lead, measure,
-      ({ lines, size, lead }) => size + (lines.length - 1) * lead <= height
-        && lines.every((line) => line.reduce((w, atom) => w + atom.w, 0) <= width));
-    const block = document.createElement('div');
-    for (const line of lines) {
-      const row = document.createElement('div');
-      const runs = [];
-      for (const { s, pc } of line) {
-        const last = runs.at(-1);
-        if (last?.pc === pc) last.text += s;
-        else runs.push({ text: s, pc });
+  function renderText(mark, x0, y1) {
+    const { size, lines } = planParagraph(mark.geometry, mark.pieces, measure);
+    const text = svg('g', { class: 'mw-mark', 'data-preview': '', 'data-mark-id': mark.id,
+      fill: `rgb(${mark.color.join(',')})`, 'font-family': family, 'font-size': size });
+    for (const { base, runs } of lines) {
+      for (const run of runs) {
+        const span = svg('text', { x: run.x - x0, y: y1 - base, 'font-weight': run.bold ? 700 : 400 });
+        if (run.source) span.classList.add('mw-source-tail');
+        span.textContent = run.s;
+        text.append(span);
       }
-      for (const { text, pc } of runs) {
-        const span = document.createElement('span');
-        span.textContent = text;
-        if (pc.source) span.className = 'mw-source-tail';
-        if (pc.bold) span.style.fontWeight = '700';
-        row.append(span);
-      }
-      block.append(row);
     }
-    el.dataset.preview = '';
-    el.style.color = `rgb(${mark.color.join(',')})`;
-    el.style.fontSize = px(size);
-    el.style.lineHeight = px(lead);
-    el.style.paddingLeft = px(1);
-    el.append(block);
+    return text;
   }
 
   /** ページ pi の重ね表示を、今の marks に合わせて描く。 */
@@ -76,23 +66,28 @@ export function createOverlay(store, viewer) {
     const layer = layerOf(pi);
     if (!layer) return;
     const [x0, y0, x1, y1] = state.views[pi];
-    const W = x1 - x0, H = y1 - y0;
-    layer.replaceChildren(...marks.map((m) => {
-      const el = document.createElement('div');
-      el.className = 'mw-mark';
-      const width = m.box.r - m.box.l + 2, height = m.box.t - m.box.b + 2;
-      Object.assign(el.style, {
-        left: `${((m.box.l - 1 - x0) / W) * 100}%`, top: `${((y1 - m.box.t - 1) / H) * 100}%`,
-        width: `${(width / W) * 100}%`, height: `${(height / H) * 100}%`,
-        background: `rgb(${m.background.join(',')})`,
-      });
-      if (m.pieces.length) renderText(el, m, width - 1, height);
-      return el;
+    layer.setAttribute('viewBox', `0 0 ${x1 - x0} ${y1 - y0}`);
+    const backgrounds = marks.map(({ id, geometry: { box }, background, pieces }) => svg('rect', {
+      class: 'mw-mark', 'data-mark-id': id, x: box.l - 1 - x0, y: y1 - box.t - 1,
+      width: box.r - box.l + 2, height: box.t - box.b + 2,
+      fill: `rgb(${background.join(',')})`, opacity: pieces.length ? 1 : 0.45,
     }));
+    const texts = marks.filter((m) => m.pieces.length).map((m) => renderText(m, x0, y1));
+    layer.replaceChildren(...backgrounds, ...texts);
   }
 
   store.subscribe((change, state) => {
     if (change.type === 'document' || change.type === 'reset') clear();
     else if (change.type === 'marks' || change.type === 'version') for (const pi of change.pages) render(pi, state);
   });
+
+  // 取得中は代替フォントで描き、Workerが取得し終えたらキャッシュから同じフォントを読んで描き直す。
+  return () => {
+    fontLoad ??= loadFonts().then((fonts) => {
+      measure = measureWithFonts(fonts);
+      family = PDF_FONT_FAMILY;
+      const { state } = store;
+      for (const pi of new Set([...state.marks.values()].map((m) => m.page))) render(pi, state);
+    }).catch(() => { fontLoad = undefined; });
+  };
 }

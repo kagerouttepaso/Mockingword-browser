@@ -119,7 +119,7 @@ spreadSelect.onchange = () => {
 // 状態の正本は store（ui/pdf-state.js）。訳す処理やボタンは store の関数で状態を変え、画面は store の知らせで描く。
 
 const store = createStore();
-createOverlay(store, viewer);
+const loadOverlayFonts = createOverlay(store, viewer);
 createPages(store, viewer, eventBus);
 createOutline(store, $('outline-tree'), (node) => {
   if (node.dest) linkService.goToDestination(node.dest);
@@ -258,6 +258,7 @@ function onWorkerMessage({ currentTarget: w, data: m }) {
     watchModel(m.stage === 'translate' && !m.done);
   } else if (m.type === 'status') { if (!stopping || !m.status) store.setMarks(m.list, m.status); }
   else if (m.type === 'preview') { if (running && !stopping) store.setPreview(m.list); }
+  else if (m.type === 'fonts') loadOverlayFonts();
   else if (m.type === 'version') receiveVersion(m.bytes, m.pages);
   else if (m.type === 'titles') store.setTitles(m.entries);
   else if (m.type === 'done') {

@@ -8,6 +8,7 @@ export const FONTS = {
   bold: { url: `${BASE}/700Bold/NotoSansJP_700Bold.ttf`, size: 5726432, sha256: '7c03e14d8a03e8f5181dbd130712d51e4ae01ac648cbd59442ae8b16c0951835' },
 };
 const CACHE = 'mockingword-pdf-fonts';
+export const PDF_FONT_FAMILY = 'MockingwordPdf';
 
 const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
 
@@ -41,12 +42,12 @@ async function fontBytes(entry, onProgress) {
 }
 
 /** フォントを登録し、字幅を測る関数を返す。measure は (文字列, 大きさ pt) → 幅 pt。 */
-async function measurer(name, bytes) {
-  const face = new FontFace(name, bytes);
+async function measurer(weight, bytes) {
+  const face = new FontFace(PDF_FONT_FAMILY, bytes, { weight });
   await face.load();
   (globalThis.document?.fonts ?? globalThis.fonts).add(face);
   const ctx = new OffscreenCanvas(1, 1).getContext('2d');
-  ctx.font = `100px "${name}"`;
+  ctx.font = `${weight} 100px "${PDF_FONT_FAMILY}"`;
   const memo = new Map();
   return {
     measure: (text, size) => {
@@ -63,8 +64,8 @@ export async function loadFonts(onProgress) {
   const done = { regular: 0, bold: 0 };
   const report = (key) => (n) => { done[key] = n; onProgress?.(done.regular + done.bold, total); };
   const [regular, bold] = await Promise.all([fontBytes(FONTS.regular, report('regular')), fontBytes(FONTS.bold, report('bold'))]);
-  return {
-    regular: { bytes: regular, ...(await measurer('MockingwordPdfRegular', regular)) },
-    bold: { bytes: bold, ...(await measurer('MockingwordPdfBold', bold)) },
-  };
+  const [regularMetrics, boldMetrics] = await Promise.all([measurer('400', regular), measurer('700', bold)]);
+  return { regular: { bytes: regular, ...regularMetrics }, bold: { bytes: bold, ...boldMetrics } };
 }
+
+export const measureWithFonts = (fonts) => (text, bold, size) => fonts[bold ? 'bold' : 'regular'].measure(text, size);

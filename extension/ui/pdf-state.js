@@ -9,7 +9,7 @@
 //   written   訳したPDFに書いたページの番号。このページは訳文の表示で latest のページを出す
 //   views     ページごとの範囲 [x0, y0, x1, y1]（PDF の点。pdf.js の page.view）
 //   outline   しおり（pdf.js の getOutline の値。無ければ空）
-//   marks     段落の番号 → { page, box, background, color, size, lead, pieces, status }。status は 'working'（訳している）・'done'（訳文がそろい、
+//   marks     段落の番号 → { page, geometry, background, color, pieces, status }。status は 'working'（訳している）・'done'（訳文がそろい、
 //             ページに書かれるのを待っている）。書いたページの段落は持たない
 //   titles    見出しの鍵 → 訳した見出し（pdf/titles.js）
 // 知らせ：{ type: 'document' }（別の PDF を開いた）・{ type: 'reset' }（訳文を全部捨てた）・{ type: 'marks', pages }（そのページの

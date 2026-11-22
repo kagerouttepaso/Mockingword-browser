@@ -1,7 +1,7 @@
 // 訳文を PDF へ書く。原文のテキストのオブジェクトを消し（消せないフォームの中の文字は背景色 p.background で覆い）、訳文を組んで書き、
 // リンクの範囲を訳文の位置へ移す。画面に出す訳したPDFと保存するPDFは、この書き方で書いた1つの文書。判定の理由は docs/12_PDFの翻訳.md「書き込み」。
 import { decode } from '../shared/markup.js';
-import { paragraphBox, planParagraph } from './plan.js';
+import { paragraphBox, paragraphGeometry, planParagraph } from './plan.js';
 
 const FPDF_FONT_TRUETYPE = 2;
 const FPDF_FILLMODE_ALTERNATE = 1;
@@ -78,7 +78,10 @@ function writePage(X, page, all, mine, handles, measure, stats) {
   const { P, M, doc, tmp, f } = X;
   // 置き方は原文を消す前に決める（下の段落の位置を使う）。フォームの中の文字は、消してもフォームの中身が書き直されない
   // （PDFium の制約）。その段落は背景色（p.background。pdf/background.js）で覆って上に書く。
-  const plans = new Map(mine.map((p) => [p, planParagraph(p, all, measure)]));
+  const plans = mine.map((p) => {
+    const geometry = p.geometry ?? paragraphGeometry(p, all);
+    return { p, geometry, plan: planParagraph(geometry, p.pieces, measure) };
+  });
 
   // 道筋（"5/0/12"）からハンドルと親（フォームの中なら親のフォーム）を引く
   const resolve = (path) => {
@@ -117,10 +120,10 @@ function writePage(X, page, all, mine, handles, measure, stats) {
   }
 
   const linkRects = new Map();
-  for (const [p, plan] of plans) {
-    if (plan.masked) {
+  for (const { p, geometry, plan } of plans) {
+    if (geometry.masked) {
       const [r, g, b] = p.background;
-      const { box } = plan;
+      const { box } = geometry;
       const rect = P.FPDFPageObj_CreateNewRect(box.l - 1, box.b - 1, box.r - box.l + 2, box.t - box.b + 2);
       P.FPDFPageObj_SetFillColor(rect, r, g, b, 255);
       P.FPDFPath_SetDrawMode(rect, FPDF_FILLMODE_ALTERNATE, false);

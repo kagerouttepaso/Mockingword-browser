@@ -150,7 +150,7 @@ function dropWorker() {
   worker = null;
   paused = false;
   stopping = false;
-  if (running) store.abort();
+  store.abort();
   running = false;
   watchModel(false);
   setProgress(null, null);

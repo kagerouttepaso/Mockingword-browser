@@ -47,7 +47,8 @@
     #pick { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: var(--muted); }
     #pick.drag { background: color-mix(in srgb, var(--accent) 8%, transparent); }
     /* 途中の訳文をページの上に重ねる。クリックと選択は下の pdf.js の層へ通す。 */
-    .mw-layer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; white-space: pre; }
+    .mw-layer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; white-space: pre; opacity: 1; transition: opacity .25s ease; }
+    .mw-layer.mw-fading { opacity: 0; }
     .mw-source-tail { opacity: .55; }
     .mw-original .mw-layer { display: none; }
     /* ページを訳したPDFのページに差し替える間、差し替える前の絵の写しを重ねる（ui/pdf-pages.js） */

@@ -9,6 +9,8 @@ import { LOG_SOURCE, MSG, PDF_BATCH_PORT } from '../extension/shared/messages.js
 import { paragraphGeometry, planParagraph } from '../extension/pdf/plan.js';
 import { createPdfQueue } from '../extension/pdf/queue.js';
 import { createPdfBatchRequests } from '../extension/ui/pdf-batches.js';
+import { createPages } from '../extension/ui/pdf-pages.js';
+import { createStore } from '../extension/ui/pdf-state.js';
 import { analyzeUx, dispatchDiagnostics, median } from './profile/replay-ux-analysis.mjs';
 
 const pdfParas = (...texts) => texts.map((text) => ({ text, plain: text, size: 12, lines: 1 }));
@@ -53,6 +55,49 @@ test('PDFのバッチの返事が逆順でも、段落がそろったページ�
   replies.get('First paragraph.').resolve(['最初の段落。']);
   assert.equal(await running, false);
   assert.deepEqual(written, [1, 0]);
+});
+
+test('PDFの確定訳文は版の到着や拡大縮小では消えず、表示中の新しいページを描き終えたときに消える', async () => {
+  const store = createStore();
+  const events = new Map();
+  const eventBus = { on(event, fn) { events.set(event, fn); } };
+  const views = Array.from({ length: 2 }, () => ({
+    renderingState: 0,
+    setPdfPage(page) { this.pdfPage = page; },
+  }));
+  const viewer = {
+    pagesCount: views.length,
+    getPageView: (pi) => views[pi],
+    _getVisiblePages: () => ({ ids: new Set([1]) }),
+    update() {},
+  };
+  createPages(store, viewer, eventBus);
+  store.open({}, [], []);
+  const pieces = [{ text: '確定した訳文。' }];
+  const marks = views.map((_, page) => ({ page, id: page, pieces }));
+  store.setMarks(marks, 'done');
+  store.setPreview([{ id: 0, pieces: [] }]);
+  const translated = { pageNumber: 1 };
+  const firstPage = Promise.withResolvers();
+  const version = { getPage: (pageNumber) => pageNumber === 1 ? firstPage.promise : Promise.resolve({ pageNumber }) };
+  store.addVersion(version, [0, 1]);
+  assert.deepEqual(store.state.marks.get(0)?.pieces, pieces);
+  assert.equal(store.state.marks.has(1), false);
+
+  const rendered = (data) => events.get('pagerendered')({ source: views[0], pageNumber: 1, ...data });
+  rendered({ cssTransform: false }); // 差し替え前のページの描画
+  assert.equal(store.state.marks.has(0), true);
+  firstPage.resolve(translated);
+  await new Promise(setImmediate);
+  assert.equal(views[0].pdfPage, translated);
+  rendered({ cssTransform: true });
+  assert.equal(store.state.marks.has(0), true);
+
+  const changes = [];
+  store.subscribe((change) => changes.push(change));
+  rendered({ cssTransform: false });
+  assert.equal(store.state.marks.has(0), false);
+  assert.deepEqual(changes, [{ type: 'marks', pages: new Set([0]), fade: true }]);
 });
 
 test('PDFの中止は未完了の全バッチを切断し、古い途中経過と返事を捨てて続きから訳す', async () => {

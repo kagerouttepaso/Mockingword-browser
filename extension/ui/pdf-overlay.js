@@ -1,7 +1,7 @@
 // 訳している段落に、訳し終えた文と薄くした残りの原文を重ねる。訳文が届くまでは原文を薄く見せる。
-// 状態（ui/pdf-state.js）の marks を知らせのたびに描く。PDF のページが差し替わると重ねた表示は消える。
+// 状態（ui/pdf-state.js）の marks を知らせのたびに描く。表示中のページが差し替わり、描き終わったら重ねた表示を徐々に消す。
 //
-// 層はページごとに1つの要素で、作ったら捨てずに使う。座標はページに対する割合なので、拡大縮小しても描き直さない。
+// 層はページごとに1つの要素で、重ねた表示がある間は使い回す。座標はページに対する割合なので、拡大縮小しても描き直さない。
 // pdf.js はページを描き直すとき（拡大縮小・見えなくなったページの破棄・ページの差し替え）にページの要素の子を消すので、
 // ページの要素の子の変化を見て層をページへ置き直す。
 import { loadFonts, measureWithFonts, PDF_FONT_FAMILY } from '../pdf/fonts.js';
@@ -36,12 +36,22 @@ export function createOverlay(store, viewer) {
     return el;
   }
 
-  function clear() {
-    for (const { el, observer } of layers.values()) {
-      observer.disconnect();
-      el.remove();
-    }
-    layers.clear();
+  function removeLayer(pi) {
+    const layer = layers.get(pi);
+    if (!layer) return;
+    layer.observer.disconnect();
+    layer.el.remove();
+    layers.delete(pi);
+  }
+
+  function fadeLayer(pi) {
+    const el = layers.get(pi)?.el;
+    if (!el) return;
+    el.classList.add('mw-fading');
+    const [transition] = el.getAnimations();
+    if (!transition) return removeLayer(pi);
+    const remove = () => { if (layers.get(pi)?.el === el) removeLayer(pi); };
+    transition.finished.then(remove, remove);
   }
 
   function renderText(mark, x0, y1) {
@@ -61,8 +71,9 @@ export function createOverlay(store, viewer) {
 
   /** ページ pi の重ね表示を、今の marks に合わせて描く。 */
   function render(pi, state) {
+    if (state.mode === 'original') return;
     const marks = [...state.marks.values()].filter((m) => m.page === pi);
-    if (!marks.length && !layers.has(pi)) return;
+    if (!marks.length) return removeLayer(pi);
     const layer = layerOf(pi);
     if (!layer) return;
     const [x0, y0, x1, y1] = state.views[pi];
@@ -77,17 +88,27 @@ export function createOverlay(store, viewer) {
   }
 
   store.subscribe((change, state) => {
-    if (change.type === 'document' || change.type === 'reset') clear();
-    else if (change.type === 'marks' || change.type === 'version') for (const pi of change.pages) render(pi, state);
+    if (['document', 'reset', 'abort', 'mode'].includes(change.type)) {
+      for (const pi of layers.keys()) removeLayer(pi);
+      if (change.type === 'mode' && state.mode === 'translated') renderAll(state);
+    } else if (change.type === 'marks') {
+      for (const pi of change.pages) {
+        if (change.fade) fadeLayer(pi);
+        else render(pi, state);
+      }
+    }
   });
+
+  function renderAll(state) {
+    for (const pi of new Set([...state.marks.values()].map((m) => m.page))) render(pi, state);
+  }
 
   // 取得中は代替フォントで描き、Workerが取得し終えたらキャッシュから同じフォントを読んで描き直す。
   return () => {
     fontLoad ??= loadFonts().then((fonts) => {
       measure = measureWithFonts(fonts);
       family = PDF_FONT_FAMILY;
-      const { state } = store;
-      for (const pi of new Set([...state.marks.values()].map((m) => m.page))) render(pi, state);
+      renderAll(store.state);
     }).catch(() => { fontLoad = undefined; });
   };
 }

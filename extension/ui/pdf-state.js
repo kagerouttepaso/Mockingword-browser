@@ -1,6 +1,5 @@
 // PDF翻訳のページの状態の正本。状態を変えるのはここの関数だけで、変えたら購読者へ「何が変わったか」を知らせる。
-// 画面（ページの差し替え・半透明の表示・見出しの欄・ボタン）は知らせを受けて描くだけで、状態を持たない
-// （一方向の流れ。docs/12_PDFの翻訳.md「表示」）。
+// 画面は知らせを受けて描き、ページの描画完了をここの関数へ返す（docs/12_PDFの翻訳.md「表示」）。
 //
 // 状態：
 //   mode      'translated'（訳文を見せる）・'original'（原文を見せる）
@@ -10,10 +9,11 @@
 //   views     ページごとの範囲 [x0, y0, x1, y1]（PDF の点。pdf.js の page.view）
 //   outline   しおり（pdf.js の getOutline の値。無ければ空）
 //   marks     段落の番号 → { page, geometry, background, color, pieces, status }。status は 'working'（訳している）・'done'（訳文がそろい、
-//             ページに書かれるのを待っている）。書いたページの段落は持たない
+//             差し替え後の描画を待っている）
 //   titles    見出しの鍵 → 訳した見出し（pdf/titles.js）
 // 知らせ：{ type: 'document' }（別の PDF を開いた）・{ type: 'reset' }（訳文を全部捨てた）・{ type: 'marks', pages }（そのページの
-//   半透明の表示が変わった）・{ type: 'version', pages }（新しい版。pages は新しく書いたページ）・{ type: 'titles' }・{ type: 'mode' }
+//   重ね表示が変わった。fade が真なら徐々に消す）・{ type: 'abort' }（中止・失敗）・
+//   { type: 'version', pages }（新しい版。pages は新しく書いたページ）・{ type: 'titles' }・{ type: 'mode' }
 
 export function createStore() {
   const listeners = new Set();
@@ -37,7 +37,8 @@ export function createStore() {
     setMarks(list, status) {
       const pages = new Set();
       for (const p of list) {
-        if (status && !state.written.has(p.page)) state.marks.set(p.id, { ...p, status });
+        if (state.written.has(p.page)) continue;
+        if (status) state.marks.set(p.id, { ...p, status });
         else state.marks.delete(p.id);
         pages.add(p.page);
       }
@@ -54,18 +55,27 @@ export function createStore() {
       }
       if (pages.size) emit({ type: 'marks', pages });
     },
-    /** 訳すのをやめた（失敗・取り消し）。半透明の表示を消す。 */
+    /** 訳すのをやめた（失敗・取り消し）。重ね表示を消す。 */
     abort() {
-      const pages = new Set([...state.marks.values()].map((m) => m.page));
       state.marks.clear();
-      emit({ type: 'marks', pages });
+      emit({ type: 'abort' });
     },
-    /** 訳したPDFの新しい版 doc が届いた。pages はこの版で新しく書いたページ（そのページの半透明の表示は消す）。 */
+    /** 訳したPDFの新しい版 doc が届いた。pages はこの版で新しく書いたページ。 */
     addVersion(doc, pages) {
       state.latest = doc;
       for (const pi of pages) state.written.add(pi);
-      for (const [id, m] of state.marks) if (state.written.has(m.page)) state.marks.delete(id);
       emit({ type: 'version', pages: new Set(pages) });
+    },
+    /** 差し替えたページの重ね表示を消す。fade は表示中のページを描き終えたときだけ指定する。 */
+    clearPageMarks(pages, fade = false) {
+      if (!pages.size) return;
+      const changed = new Set();
+      for (const [id, mark] of state.marks) {
+        if (!pages.has(mark.page)) continue;
+        state.marks.delete(id);
+        changed.add(mark.page);
+      }
+      if (changed.size) emit({ type: 'marks', pages: changed, fade });
     },
     setTitles(entries) {
       for (const [key, title] of entries) state.titles.set(key, title);

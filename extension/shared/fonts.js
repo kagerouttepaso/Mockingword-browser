@@ -1,7 +1,20 @@
 // ページ翻訳の日本語フォント（4系統の分類・おすすめ一覧・既定値・unicode-range）。
 // 純粋な規則だけを置き、DOM・chrome には触れない（tools/architecture.test.mjs の PURE 対象）。
 
-/** 元のページのフォントを分類する4系統と、各系統の既定・おすすめ（Fontsource の id）。 */
+/** Fontsource 以外の公式配布元から取得する特別登録フォント（ここへ足すだけで検索・キャッシュ・適用へ統合される）。 */
+export const CUSTOM_FONTS = [
+  {
+    id: 'x12y16px-maru-monica',
+    family: 'x12y16pxMaruMonica（マルモニカ）',
+    category: 'monospace',
+    weights: [400],
+    files: {
+      400: { url: 'https://hicchicc.github.io/00ff/x12y16pxMaruMonica.ttf', contentType: 'font/ttf' },
+    },
+  },
+];
+
+/** 元のページのフォントを分類する4系統と、各系統の既定・おすすめ（Fontsource / CUSTOM_FONTS の id）。 */
 export const FONT_CATEGORIES = [
   {
     id: 'sans',
@@ -14,8 +27,8 @@ export const FONT_CATEGORIES = [
     id: 'mono',
     label: '等幅（ターミナル・コード風）',
     hint: 'OpenTUI Mono・JetBrains Mono・Consolas などの等幅フォント',
-    defaultId: 'dotgothic16',
-    recommended: ['dotgothic16', 'm-plus-1-code', 'biz-udgothic', 'ibm-plex-sans-jp'],
+    defaultId: 'x12y16px-maru-monica',
+    recommended: ['x12y16px-maru-monica', 'dotgothic16', 'm-plus-1-code', 'biz-udgothic', 'ibm-plex-sans-jp'],
   },
   {
     id: 'serif',
@@ -36,13 +49,14 @@ export const FONT_CATEGORIES = [
 export const DEFAULT_PAGE_FONTS = {
   enabled: true,
   sans: 'noto-sans-jp',
-  mono: 'dotgothic16',
+  mono: 'x12y16px-maru-monica',
   serif: 'noto-serif-jp',
   rounded: 'line-seed-jp',
 };
 
 /** オフライン時やカタログ未取得時にも使える、おすすめフォントの基本情報。 */
 export const BUILTIN_FONTS = [
+  ...CUSTOM_FONTS.map(({ id, family, category, weights }) => ({ id, family, category, weights })),
   { id: 'noto-sans-jp', family: 'Noto Sans JP', category: 'sans-serif', weights: [400, 700] },
   { id: 'ibm-plex-sans-jp', family: 'IBM Plex Sans JP', category: 'sans-serif', weights: [400, 700] },
   { id: 'biz-udpgothic', family: 'BIZ UDPGothic', category: 'sans-serif', weights: [400, 700] },
@@ -109,6 +123,16 @@ export function pickFontWeights(weights) {
 /** Fontsource CDN の WOFF2 URL（日本語サブセット）。 */
 export function fontWoff2Url(fontId, weight) {
   return `https://cdn.jsdelivr.net/fontsource/fonts/${fontId}@latest/japanese-${weight}-normal.woff2`;
+}
+
+/** 特別登録フォントならその取得元を、そうでなければ Fontsource CDN の WOFF2 を返す。 */
+export function fontFileSpec(fontId, weight) {
+  const custom = CUSTOM_FONTS.find((f) => f.id === fontId);
+  if (custom) {
+    const file = custom.files[weight] ?? Object.values(custom.files)[0];
+    return file ? { url: file.url, contentType: file.contentType || 'font/ttf' } : null;
+  }
+  return { url: fontWoff2Url(fontId, weight), contentType: 'font/woff2' };
 }
 
 // ---- CSS の font-family 分類 ----

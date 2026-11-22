@@ -1,12 +1,20 @@
 // ページ翻訳の日本語フォントのカタログ取得と WOFF2 ダウンロード・キャッシュ（Service Worker 側）。
 // 閲覧中ページから外部サーバーへ通信せず、Service Worker 経由で初回だけ取得して Cache Storage に保存する。
 
-import { BUILTIN_FONTS, fontWoff2Url, pickFontWeights } from '../shared/fonts.js';
+import { BUILTIN_FONTS, CUSTOM_FONTS, fontFileSpec, pickFontWeights } from '../shared/fonts.js';
 
 const CATALOG_URL = 'https://api.fontsource.org/v1/fonts?subsets=japanese';
 const CATALOG_CACHE_KEY = 'fontCatalogCache';
 const CATALOG_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const FONT_CACHE_NAME = 'mockingword-page-fonts';
+
+/** カタログへ特別登録フォント（CUSTOM_FONTS）を重複なしで合流させる。 */
+function mergeCustomFonts(fonts) {
+  const map = new Map();
+  for (const f of CUSTOM_FONTS) map.set(f.id, trimEntry(f));
+  for (const f of fonts) if (!map.has(f.id)) map.set(f.id, f);
+  return [...map.values()].sort((a, b) => a.family.localeCompare(b.family));
+}
 
 /** ArrayBuffer をチャンク単位で Base64 文字列へ変換する（大きいファイルでもスタック溢れしない）。 */
 function bufferToBase64(buffer) {
@@ -41,7 +49,7 @@ export async function getFontCatalog(forceRefresh = false) {
     try {
       const saved = (await chrome.storage.local.get(CATALOG_CACHE_KEY))[CATALOG_CACHE_KEY];
       if (saved?.fonts?.length && Date.now() - saved.at < CATALOG_TTL_MS) {
-        return { ok: true, fonts: saved.fonts, cached: true, offline: false };
+        return { ok: true, fonts: mergeCustomFonts(saved.fonts), cached: true, offline: false };
       }
     } catch {}
   }
@@ -57,14 +65,14 @@ export async function getFontCatalog(forceRefresh = false) {
         : [];
       if (!fonts.length) throw new Error('フォント一覧が空です');
       await chrome.storage.local.set({ [CATALOG_CACHE_KEY]: { at: Date.now(), fonts } }).catch(() => {});
-      return { ok: true, fonts, cached: false, offline: false };
+      return { ok: true, fonts: mergeCustomFonts(fonts), cached: false, offline: false };
     } catch (e) {
       // 期限切れキャッシュがあればそれを優先し、無ければ同梱のおすすめ一覧を返す。
       try {
         const saved = (await chrome.storage.local.get(CATALOG_CACHE_KEY))[CATALOG_CACHE_KEY];
-        if (saved?.fonts?.length) return { ok: true, fonts: saved.fonts, cached: true, offline: true, error: e.message };
+        if (saved?.fonts?.length) return { ok: true, fonts: mergeCustomFonts(saved.fonts), cached: true, offline: true, error: e.message };
       } catch {}
-      return { ok: true, fonts: BUILTIN_FONTS, cached: false, offline: true, error: e.message };
+      return { ok: true, fonts: mergeCustomFonts(BUILTIN_FONTS), cached: false, offline: true, error: e.message };
     } finally {
       catalogInFlight = null;
     }
@@ -72,8 +80,8 @@ export async function getFontCatalog(forceRefresh = false) {
   return catalogInFlight;
 }
 
-/** 1つの WOFF2 ファイルを Cache Storage から読むか、jsDelivr から取得して保存する。 */
-async function fetchWoff2(url) {
+/** 1つのフォントファイル（WOFF2 / TTF）を Cache Storage から読むか、配布元から取得して保存する。 */
+async function fetchFontFile(url, contentType) {
   const cache = await caches.open(FONT_CACHE_NAME);
   const hit = await cache.match(url);
   if (hit) {
@@ -85,14 +93,14 @@ async function fetchWoff2(url) {
   if (!res.ok) throw new Error(`フォントを取得できませんでした（${res.status}）`);
   const buf = await res.arrayBuffer();
   if (buf.byteLength === 0) throw new Error('フォントデータが空です');
-  await cache.put(url, new Response(buf, { headers: { 'content-type': 'font/woff2' } }));
+  await cache.put(url, new Response(buf, { headers: { 'content-type': contentType } }));
   return buf;
 }
 
 const fontInFlight = new Map();
 
 /**
- * 指定された Fontsource ID の日本語 WOFF2（標準・太字）を取得し、
+ * 指定されたフォント ID の日本語フォント（標準・太字）を取得し、
  * コンテンツスクリプトや設定画面で FontFace へ渡せる Base64 配列で返す。
  */
 export async function loadPageFont(fontId) {
@@ -113,8 +121,10 @@ export async function loadPageFont(fontId) {
 
     const faces = [];
     for (const w of targetWeights) {
+      const spec = fontFileSpec(fontId, w);
+      if (!spec) continue;
       try {
-        const buf = await fetchWoff2(fontWoff2Url(fontId, w));
+        const buf = await fetchFontFile(spec.url, spec.contentType);
         faces.push({ weight: String(w), data: bufferToBase64(buf) });
       } catch (e) {
         if (faces.length === 0 && w === targetWeights[targetWeights.length - 1]) {

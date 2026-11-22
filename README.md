@@ -15,7 +15,7 @@ Android版 [Mockingword](https://github.com/kagerouttepaso/PlamoTranslate) と�
 
 ## インストール
 
-Chromeウェブストアにはまだ申請していません。開発版を試す場合：
+[Chromeウェブストア](https://chromewebstore.google.com/detail/ncpkibiacmcngnnfeglekhnpbefdijmp)から入れられます（Chrome・Brave・Edgeなど）。開発版を試す場合：
 
 1. このリポジトリを取得する。
 2. `chrome://extensions`（Braveでは`brave://extensions`）で「デベロッパーモード」をオンにする。

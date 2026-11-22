@@ -2,6 +2,7 @@
 // Service Worker（background/config.js）が翻訳のたびに読む。
 import { DEFAULTS, LOCAL_DEFAULTS, PARALLEL_CHOICES, UBATCH_CHOICES, fillLanguages, describeStatus, normalizeLocal } from '../shared/settings.js';
 import { MSG } from '../shared/messages.js';
+import { initFontOptions } from './options-fonts.js';
 
 const cores = navigator.hardwareConcurrency || 1;
 document.getElementById('cores').textContent = cores;
@@ -184,3 +185,4 @@ renderLogs();
 setInterval(renderLogs, 3000);
 
 chrome.storage.onChanged.addListener((c, area) => { if (area === 'sync' && c.theme) show({theme:c.theme.newValue ?? 'system'}); });
+initFontOptions();

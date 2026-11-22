@@ -1,5 +1,7 @@
 // 設定の既定値と選択肢。Service Worker・ボタンのメニュー・設定画面・テキスト翻訳で共有する。
 
+import { DEFAULT_PAGE_FONTS } from './fonts.js';
+
 /**
  * chrome.storage.sync に置く設定（Brave の同期で、ほかのPCとそろう）。
  * model：'0.8B'（既定。速い）・'2B'（訳が正確、約3倍遅い）。
@@ -7,8 +9,9 @@
  * mode：訳したときの表示。'trans'（訳文だけ）・'both'（原文と訳文を並べる）。
  * selectionIcon：文章を選んだときに「訳」アイコンを出すか。
  * debugLog：調査用のログを残すか（ページ・Service Worker・モデルの出来事。設定画面から保存できる）。
+ * pageFonts：ページ翻訳で使う日本語フォント（4系統ごとの Fontsource ID と有効・無効）。
  */
-export const DEFAULTS = { theme: 'system', form: 'polite', source: '', mode: 'trans', model: '0.8B', idleMinutes: 10, debugLog: false, selectionIcon: true };
+export const DEFAULTS = { theme: 'system', form: 'polite', source: '', mode: 'trans', model: '0.8B', idleMinutes: 10, debugLog: false, selectionIcon: true, pageFonts: DEFAULT_PAGE_FONTS };
 
 // 既定の同時実行数を変えるときはここだけを変える。保存済みのPCごとの値は引き継ぐ。
 // 2026-11-10、作者の判断で8本にした。自前ビルドの wllama では、8本が全体の時間も最初の訳も現行の4本より速い（docs/09_性能の仮説検証.md「最終の通算」）。

@@ -2,6 +2,7 @@
 // （plamo-mode-trans：訳文、plamo-mode-orig：原文、plamo-mode-both：対訳）。設計は docs/04_ページの翻訳.md「書き込み」。
 
 import { decode, previewLine, remainingSource } from '../shared/markup.js';
+import { applyTranslationFont, clearPageFonts } from './fonts.js';
 import { state } from './state.js';
 
 const MODES = ['trans', 'orig', 'both'];
@@ -85,6 +86,7 @@ function translationSpan(para, last) {
     while (anchor.parentNode && anchor.parentNode !== root) anchor = anchor.parentNode;
     anchor.parentNode.insertBefore(span, anchor.nextSibling);
     para.trSpan = span;
+    applyTranslationFont(para, span);
   }
   return para.trSpan;
 }
@@ -189,5 +191,6 @@ export function removeAll() {
   for (const span of document.querySelectorAll('.plamo-tr')) span.remove();
   for (const wrap of document.querySelectorAll('[data-plamo-orig]')) wrap.replaceWith(...wrap.childNodes);
   for (const el of document.querySelectorAll('[data-plamo-hide]')) el.removeAttribute('data-plamo-hide');
+  clearPageFonts();
   setModeClass(null);
 }

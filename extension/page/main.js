@@ -7,6 +7,7 @@ import { initBar, removeBar, setBarDone, showBar, updateBar, barMessage } from '
 import { clearNotice, notice, toast, translateSelection } from './bubble.js';
 import { blocksInRange, collect } from './collect.js';
 import { OWN } from './dom.js';
+import { initPageFonts } from './fonts.js';
 import { markup } from './paragraph.js';
 import { cancelStale, enqueue, pump, report, resetMeasure, showPartial } from './queue.js';
 import { log, notify, state, trace } from './state.js';
@@ -35,6 +36,7 @@ function showTranslation(mode) {
 // ---------------- ページ全体 ----------------
 
 function start(mode) {
+  initPageFonts();
   showBar();
   if (state.started) return setMode(mode);
   state.started = true;

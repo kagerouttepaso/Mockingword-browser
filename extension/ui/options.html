@@ -21,6 +21,29 @@
     #tunerows { margin-top: 8px; border-collapse: collapse; width: 100%; font-size: 0.92em; }
     #tunerows th, #tunerows td { border-bottom: 1px solid var(--line); padding: 3px 6px; text-align: left; }
     #tunerows tr.best td { font-weight: bold; }
+    .font-rows { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
+    .font-rows.is-disabled { opacity: 0.55; pointer-events: none; }
+    .font-row { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; background: var(--panel); }
+    .font-row-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+    .font-row-title { display: flex; flex-direction: column; gap: 2px; }
+    .font-row-ctrl { display: flex; align-items: center; gap: 8px; }
+    .font-current-name { font-weight: 600; font-size: 0.95em; }
+    .font-preview { margin-top: 6px; padding: 6px 8px; border-radius: 4px; border: 1px solid var(--line); font-size: 15px; line-height: 1.5; }
+    .font-picker { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 8px; }
+    .font-search { width: 100%; box-sizing: border-box; padding: 6px 8px; margin-bottom: 6px; }
+    .font-list { max-height: 220px; overflow-y: auto; border: 1px solid var(--line); border-radius: 4px; display: flex; flex-direction: column; }
+    .font-group-title { font-size: 0.8em; color: var(--muted); padding: 4px 8px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; }
+    .font-option { display: flex; justify-content: space-between; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 6px 8px; border: 0; border-bottom: 1px solid var(--line); background: transparent; cursor: pointer; font: inherit; color: inherit; border-radius: 0; }
+    .font-option:hover { background: var(--line); }
+    .font-option.selected { font-weight: bold; }
+    .font-option-row { display: flex; align-items: stretch; border-bottom: 1px solid var(--line); }
+    .font-option-row .font-option { flex: 1; border-bottom: 0; }
+    .font-try-btn { flex: 0 0 auto; border: 0; border-left: 1px solid var(--line); background: transparent; color: var(--muted); padding: 4px 10px; font-size: 0.82em; cursor: pointer; border-radius: 0; }
+    .font-try-btn:hover { background: var(--line); color: inherit; }
+    .font-try-btn:disabled { opacity: 0.6; cursor: default; }
+    .font-empty { padding: 10px 8px; color: var(--muted); font-size: 0.9em; }
+    .font-footer { margin-top: 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .font-footer > small { flex: 1; }
   </style>
 <script type="module" src="theme.js"></script>
 </head>
@@ -116,6 +139,21 @@
     <label><input type="radio" name="mode" value="trans"> 訳文だけ（原文と置き換える）</label>
     <label><input type="radio" name="mode" value="both"> 原文と訳文を並べる</label>
     <small>Alt+T（またはボタンのメニューの「このページを訳す」）をもう一度押すと原文に戻り、さらに押すとこの表示に戻ります。</small>
+  </fieldset>
+
+  <fieldset>
+    <legend>ページの翻訳：訳文のフォント</legend>
+    <label class="inline"><input type="checkbox" id="pageFontsEnabled"> 元のページの雰囲気に合わせて日本語フォントを切り替える</label>
+    <br><small>見出しの等幅フォントや本文のサンセリフ・明朝・丸ゴシックを自動判定し、英数字は元サイトのフォントを残したまま日本語だけ雰囲気の近い書体にします。選んだフォントは初回だけ jsDelivr（Fontsource）から取得してブラウザー内にキャッシュします。</small>
+    <div id="fontRows" class="font-rows"></div>
+    <div class="font-footer">
+      <small id="fontCatalogNote">日本語フォント一覧を読み込んでいます…</small>
+      <button type="button" id="fontReset">既定に戻す</button>
+    </div>
+    <div style="margin-top: 8px; padding: 8px 12px; border-radius: 6px; background: var(--panel); display: flex; align-items: center; gap: 8px;">
+      <span id="fontcachestats" style="flex: 1;">フォントのキャッシュ：確認中…</span>
+      <button type="button" id="fontcacheclear">キャッシュを消す</button>
+    </div>
   </fieldset>
 
   <fieldset>

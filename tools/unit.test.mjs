@@ -359,6 +359,9 @@ test('pageReadable：HTML・XML・テキストの文書だけページ側の部�
 
 test('classifyFontFamily：元の font-family から4系統を判定し、日本語フォント指定済みの要素は上書きしない', () => {
   assert.equal(classifyFontFamily('"OpenTUI Mono", "OpenTUI Mono Menlo", monospace').category, 'mono');
+  assert.equal(classifyFontFamily('anthropicSerif, "anthropicSerif Fallback"').category, 'serif');
+  assert.equal(classifyFontFamily('anthropicMono, "anthropicMono Fallback"').category, 'mono');
+  assert.equal(classifyFontFamily('anthropicSans, "anthropicSans Fallback"').category, 'sans');
   assert.equal(classifyFontFamily('Inter, -apple-system, sans-serif').category, 'sans');
   assert.equal(classifyFontFamily('Georgia, "Times New Roman", serif').category, 'serif');
   assert.equal(classifyFontFamily('"Nunito", sans-serif').category, 'rounded');

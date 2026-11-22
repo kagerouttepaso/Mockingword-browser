@@ -62,7 +62,7 @@ function wrapOriginal(para) {
     if (!n.isConnected) continue;
     let wrap = n.parentElement;
     if (!wrap?.hasAttribute('data-plamo-orig')) {
-      wrap = document.createElement('span');
+      wrap = document.createElement('mw-orig');
       wrap.setAttribute('data-plamo-orig', '');
       n.parentNode.insertBefore(wrap, n);
       wrap.appendChild(n);
@@ -75,7 +75,8 @@ function wrapOriginal(para) {
 /** 訳文を置く要素。太字だけの行・見出しのリンクなら、その内側に置く。 */
 function translationSpan(para, last) {
   if (!para.trSpan?.isConnected) {
-    const span = document.createElement('span');
+    // サイトの CSS（例：.Title span）が誤爆しないよう、汎用 span ではなくカスタム要素名を使う。
+    const span = document.createElement('mw-tr');
     span.className = 'plamo-tr';
     span.lang = 'ja';
     span.setAttribute('translate', 'no');
@@ -115,7 +116,7 @@ export function applyPartial(para, text, complete) {
     const { sentences } = previewLine(text);
     const rest = renderTree(remainingSource(para.text, para.marks.map((mark) => mark.kind), sentences), para.marks);
     if (rest.length) {
-      tail = document.createElement('span');
+      tail = document.createElement('mw-tail');
       tail.className = 'plamo-source-tail';
       tail.lang = para.element.lang || document.documentElement.lang;
       tail.append(' ', ...rest);

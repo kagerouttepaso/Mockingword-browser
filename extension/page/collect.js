@@ -80,9 +80,9 @@ export function collect(root) {
   }
   const added = [];
   for (const [element, nodes] of groups) {
-    const { text, plain, marks, hide, root } = markup(element, nodes);
+    const { text, plain, marks, hide, root, fontFamily } = markup(element, nodes);
     if (!worthTranslating(plain)) continue;
-    const para = { element, nodes, text, marks, hide, root, group: groupOf(element, nodes), translation: null, trSpan: null };
+    const para = { element, nodes, text, marks, hide, root, fontFamily, group: groupOf(element, nodes), translation: null, trSpan: null };
     for (const n of nodes) {
       state.seen.add(n);
       state.owner.set(n, para);

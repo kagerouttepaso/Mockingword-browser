@@ -118,13 +118,19 @@ function applyToSpan(span, origFontFamily) {
   ensureCategoryFont(category, fontId);
 }
 
+function sameConfig(a, b) {
+  return a.enabled === b.enabled && a.sans === b.sans && a.mono === b.mono && a.serif === b.serif && a.rounded === b.rounded;
+}
+
 /** フォント設定を読み込み、変更の監視を始める。 */
 export function initPageFonts() {
   if (typeof chrome === 'undefined' || !chrome.storage?.sync) return;
   if (!configLoaded) {
     configLoaded = true;
     chrome.storage.sync.get({ pageFonts: DEFAULT_PAGE_FONTS }).then(({ pageFonts }) => {
-      config = normalizePageFonts(pageFonts);
+      const next = normalizePageFonts(pageFonts);
+      if (sameConfig(config, next)) return;
+      config = next;
       refreshAppliedSpans();
     }).catch(() => {});
   }
@@ -132,23 +138,26 @@ export function initPageFonts() {
     listening = true;
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area !== 'sync' || !changes.pageFonts) return;
-      config = normalizePageFonts(changes.pageFonts.newValue);
+      const next = normalizePageFonts(changes.pageFonts.newValue);
+      if (sameConfig(config, next)) return;
+      config = next;
       refreshAppliedSpans();
     });
   }
 }
 
-/** 訳文の span へ、元の段落の雰囲気に合う日本語フォントを当てる。 */
+/** 訳文の要素へ、元の段落の雰囲気に合う日本語フォントを当てる。読み取り段で取得済みの para.fontFamily を使い、書き込み段で getComputedStyle を呼ばない。 */
 export function applyTranslationFont(para, span) {
-  if (typeof getComputedStyle !== 'function' || !span?.style) return;
+  if (!span?.style) return;
   initPageFonts();
-  const target = para.root?.isConnected ? para.root : para.element;
-  if (!target) return;
-  let origFontFamily;
-  try {
-    origFontFamily = getComputedStyle(target).fontFamily;
-  } catch {
-    return;
+  let origFontFamily = para.fontFamily;
+  if (!origFontFamily && typeof getComputedStyle === 'function') {
+    const target = para.root?.isConnected ? para.root : para.element;
+    if (target) {
+      try {
+        origFontFamily = getComputedStyle(target).fontFamily;
+      } catch {}
+    }
   }
   if (!origFontFamily) return;
   if (span.dataset) span.dataset.plamoOrigFont = origFontFamily;

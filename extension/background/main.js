@@ -1,8 +1,8 @@
 // 拡張機能のService Workerの入口。起動時の準備と、ほかの部品からのメッセージの振り分けだけを行う。
 // 部品の全体像とメッセージの流れは docs/02_アーキテクチャ.md。
 
-import { LOG_SOURCE, LOG_TAG, MSG, OFFSCREEN } from '../shared/messages.js';
-import { CancelledError, cancel, forget, status, streamPartial, unload } from '../core/engine.js';
+import { LOG_SOURCE, LOG_TAG, MSG, OFFSCREEN, PDF_BATCH_PORT } from '../shared/messages.js';
+import { CancelledError, cancel, forget, previewRows, status, streamPartial, unload } from '../core/engine.js';
 import { lookupCached, translateBatch, translateLines, translateText } from '../core/translator.js';
 import { clear as clearCache, stats as cacheStats } from '../core/cache.js';
 import { migrate, settings } from './config.js';
@@ -35,22 +35,24 @@ function noticeToTab(text) {
 }
 
 /** ページのバッチの番号（タブ・枠・バッチ）。取り消しで同じ番号を作る。 */
-const requestIdOf = (sender, id) => `page:${sender.tab?.id}:${sender.frameId}:${id}`;
+const requestIdOf = (sender, id, pdf = false) => pdf
+  ? `pdf:${sender.documentId}:${id}`
+  : `page:${sender.tab?.id}:${sender.frameId}:${id}`;
 
 /** 訳しているページのバッチのリクエスト番号（取り消しを、訳している間だけ効かせる）。 */
 const batches = new Set();
 
 /** メッセージの種類ごとの受け持ち。返した値をそのまま返事にする。 */
 const handlers = {
-  async [MSG.TRANSLATE_BATCH](message, sender) {
+  async [MSG.TRANSLATE_BATCH](message, sender, onPreview) {
     lastTabId = sender.tab?.id ?? lastTabId;
-    const requestId = requestIdOf(sender, message.id);
+    const requestId = requestIdOf(sender, message.id, !!onPreview);
     const t0 = Date.now();
     batches.add(requestId);
     try {
       const options = await settings();
       await markUse();
-      const r = await translateBatch(message.texts, { ...options, requestId });
+      const r = await translateBatch(message.texts, { ...options, requestId, onPreview });
       addLog(LOG_SOURCE.background, '完了', { requestId, ms: Date.now() - t0, requests: r.stats.requests, fallback: r.stats.fallback });
       await markUse();
       return { ok: true, model: options.model, ...r };
@@ -177,13 +179,12 @@ const handlers = {
     return { ok: true };
   },
   async [MSG.PARTIAL](message) {
-    if (streamPartial(message)) return { ok: true }; // テキスト翻訳の途中（core/engine.js）
+    if (streamPartial(message)) return { ok: true }; // テキスト翻訳とPDFの途中（core/engine.js）
     // Offscreen Documentで切り出した行を、ページのバッチの行へ戻して渡す。
     const rows = message.pageRows;
     const m = /^page:(\d+):(\d+):(\d+)$/.exec(message.requestId ?? '');
     if (!rows || !m || !batches.has(message.requestId)) return { ok: true };
-    const snapshot = message.text.split('\n');
-    const lines = snapshot.slice(0, rows.length).map((text, k) => ({ i: rows[k], text, complete: k < snapshot.length - 1 }));
+    const lines = previewRows(message);
     chrome.tabs.sendMessage(Number(m[1]), { type: MSG.SHOW_PARTIAL, id: Number(m[3]), lines }, { frameId: Number(m[2]) }).catch(() => {});
     return { ok: true };
   },
@@ -197,12 +198,35 @@ const handlers = {
   },
 };
 
+// PDFの拡張機能ページには tabs.sendMessage で送れない。依頼元が開いた Port だけに途中経過と結果を返す。
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== PDF_BATCH_PORT || port.sender?.url?.split(/[?#]/, 1)[0] !== chrome.runtime.getURL('ui/pdf.html')) return;
+  let requestId;
+  let disconnected = false;
+  const send = (value) => { if (!disconnected) port.postMessage(value); };
+  port.onDisconnect.addListener(() => {
+    disconnected = true;
+    if (batches.has(requestId)) cancel(requestId).catch(() => {});
+  });
+  port.onMessage.addListener(async (message) => {
+    if (requestId || message.type !== MSG.TRANSLATE_BATCH) return;
+    requestId = requestIdOf(port.sender, message.id, true);
+    try {
+      const result = await handlers[MSG.TRANSLATE_BATCH](message, port.sender, (lines) => send({ type: MSG.SHOW_PARTIAL, lines }));
+      send(result);
+    } catch (e) {
+      console.error(`${LOG_TAG} Service Worker で失敗`, message.type, e?.stack ?? e);
+      send({ ok: false, error: e.message });
+    }
+  });
+});
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // Offscreen Document宛てのメッセージは、そちらが答える。ここで答えると、そちらの返事より先に届いてしまう。
   if (message?.target === OFFSCREEN) return false;
   const handler = handlers[message?.type];
   if (!handler) return false;
-  const response = [MSG.TRANSLATE_BATCH, MSG.CANCEL].includes(message.type)
+  const response = [MSG.TRANSLATE_BATCH, MSG.CANCEL, MSG.PARTIAL].includes(message.type)
     ? handler(message, sender)
     : settings().then((options) => handler(message, sender, options));
   response.then(sendResponse)

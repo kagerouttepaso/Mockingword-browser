@@ -8,8 +8,8 @@ const FPDF_FILLMODE_ALTERNATE = 1;
 
 const plainOf = (s) => s.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
 
-/** 訳文 → 書式つきの断片 [{ text, bold, link }]。写す要素（等幅の文字）は原文の文字を使う。 */
-function piecesOf(p, translation) {
+/** マーカーを復号した木 → 書式つきの断片 [{ text, bold, link }]。写す要素（等幅の文字）は原文の文字を使う。 */
+export function piecesOf(p, nodes) {
   const pieces = [];
   const walk = (nodes, st) => {
     for (const n of nodes) {
@@ -21,7 +21,7 @@ function piecesOf(p, translation) {
       }
     }
   };
-  walk(decode(translation, p.kinds), { bold: p.bold, link: p.whole?.link ?? null });
+  walk(nodes, { bold: p.bold, link: p.whole?.link ?? null });
   return pieces;
 }
 
@@ -34,7 +34,7 @@ export function prepare(paras, translations) {
   for (const p of paras) {
     if ((p.skip && p.skip !== 'same') || !translations.has(p.text)) continue;
     if (plainOf(translations.get(p.text)) === plainOf(p.plain)) { p.skip = 'same'; continue; }
-    p.pieces ??= piecesOf(p, translations.get(p.text));
+    p.pieces ??= piecesOf(p, decode(translations.get(p.text), p.kinds));
     todo.push(p);
   }
   return todo;

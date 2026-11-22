@@ -1,7 +1,7 @@
 // PDF翻訳のページ。?src=<PDFのURL> の PDF、または選んだ・ドラッグした PDF を、レイアウト・リンク・しおりを残したまま訳す。
 // 表示は pdf.js のビューア（拡大・リンク・文字の選択・検索）。訳したPDFは Worker（pdf/worker.js）が PDFium で1つ書き、
 // ページの段落がそろうたびにそのページを書いて版を送る。画面はその版のページに差し替える（ui/pdf-pages.js）ので、
-// 見えている訳文と保存するPDFは同じもの。訳している段落の原文は半透明にする（ui/pdf-overlay.js）。流れは docs/12_PDFの翻訳.md。
+// 生成中に読める訳文はページの上に重ねる（ui/pdf-overlay.js）。保存するのは Worker が書いた PDF。流れは docs/12_PDFの翻訳.md。
 import { MSG } from '../shared/messages.js';
 import { describeStatus, LOCAL_DEFAULTS, normalizeLocal } from '../shared/settings.js';
 import { createPdfBatchRequests } from './pdf-batches.js';
@@ -45,7 +45,7 @@ function watchModel(on) {
   }, 1000);
 }
 
-const batches = createPdfBatchRequests((message) => chrome.runtime.sendMessage(message));
+const batches = createPdfBatchRequests((options) => chrome.runtime.connect(options));
 
 // ---------------- pdf.js のビューア ----------------
 
@@ -243,7 +243,9 @@ function onWorkerMessage({ currentTarget: w, data: m }) {
   if (m.type === 'opened') startWorker(w);
   else if (m.type === 'translate') {
     if (!running || stopping) return;
-    batches.translate(m.texts).then(
+    batches.translate(m.texts, (lines) => {
+      if (w === worker && running && !stopping) w.postMessage({ type: 'partial', id: m.id, lines });
+    }).then(
       (results) => { if (w === worker && !stopping) w.postMessage({ type: 'translated', id: m.id, results }); },
       (e) => { if (w === worker && !stopping) w.postMessage({ type: 'translated', id: m.id, error: e.message }); },
     );
@@ -254,7 +256,8 @@ function onWorkerMessage({ currentTarget: w, data: m }) {
     status.textContent = STAGES[m.stage] + percent;
     setProgress(m.done, m.total ?? null);
     watchModel(m.stage === 'translate' && !m.done);
-  } else if (m.type === 'status') store.setMarks(m.list, m.status);
+  } else if (m.type === 'status') { if (!stopping || !m.status) store.setMarks(m.list, m.status); }
+  else if (m.type === 'preview') { if (running && !stopping) store.setPreview(m.list); }
   else if (m.type === 'version') receiveVersion(m.bytes, m.pages);
   else if (m.type === 'titles') store.setTitles(m.entries);
   else if (m.type === 'done') {
@@ -361,12 +364,13 @@ $('stop').onclick = () => {
   status.textContent = '翻訳を中止しています';
   worker.postMessage({ type: 'stop' });
   batches.cancel();
+  store.abort();
 };
 $('show-trans').onclick = () => store.setMode('translated');
 $('show-orig').onclick = () => store.setMode('original');
 $('zoom-in').onclick = () => { viewer.currentScale = Math.min(5, viewer.currentScale * 1.2); };
 $('zoom-out').onclick = () => { viewer.currentScale = Math.max(0.25, viewer.currentScale / 1.2); };
-// 保存するのは、画面に出している訳したPDFそのもの（訳している途中でも、その時点で訳文に替わったページまで）
+// 保存するのは Worker が書いた訳したPDF。画面に重ねた途中の訳文は含まない。
 $('save').onclick = () => {
   if (!worker) return;
   $('save').disabled = true;

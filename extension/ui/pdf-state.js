@@ -9,7 +9,7 @@
 //   written   訳したPDFに書いたページの番号。このページは訳文の表示で latest のページを出す
 //   views     ページごとの範囲 [x0, y0, x1, y1]（PDF の点。pdf.js の page.view）
 //   outline   しおり（pdf.js の getOutline の値。無ければ空）
-//   marks     段落の番号 → { page, box, background, status }。status は 'working'（訳している）・'done'（訳文がそろい、
+//   marks     段落の番号 → { page, box, background, color, size, lead, pieces, status }。status は 'working'（訳している）・'done'（訳文がそろい、
 //             ページに書かれるのを待っている）。書いたページの段落は持たない
 //   titles    見出しの鍵 → 訳した見出し（pdf/titles.js）
 // 知らせ：{ type: 'document' }（別の PDF を開いた）・{ type: 'reset' }（訳文を全部捨てた）・{ type: 'marks', pages }（そのページの
@@ -33,13 +33,24 @@ export function createStore() {
       Object.assign(state, { latest: null, written: new Set(), marks: new Map(), titles: new Map() });
       emit({ type: 'reset' });
     },
-    /** 段落の半透明の表示を変える（list は { id, page, box, background }。status が null なら半透明の表示を消す）。 */
+    /** Worker が知らせた段落の状態を反映する。status が null なら重ねた表示を消す。 */
     setMarks(list, status) {
       const pages = new Set();
       for (const p of list) {
-        if (status && !state.written.has(p.page)) state.marks.set(p.id, { page: p.page, box: p.box, background: p.background, status });
+        if (status && !state.written.has(p.page)) state.marks.set(p.id, { ...p, status });
         else state.marks.delete(p.id);
         pages.add(p.page);
+      }
+      if (pages.size) emit({ type: 'marks', pages });
+    },
+    /** 生成中の段落だけを更新する。確定した段落の訳文は途中経過で上書きしない。 */
+    setPreview(list) {
+      const pages = new Set();
+      for (const { id, pieces } of list) {
+        const mark = state.marks.get(id);
+        if (mark?.status !== 'working') continue;
+        mark.pieces = pieces;
+        pages.add(mark.page);
       }
       if (pages.size) emit({ type: 'marks', pages });
     },

@@ -46,10 +46,14 @@
     #viewerContainer { position: absolute; inset: 0; overflow: auto; background: var(--mw-surface-container); }
     #pick { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: var(--muted); }
     #pick.drag { background: color-mix(in srgb, var(--accent) 8%, transparent); }
-    /* 半透明の表示の層（ui/pdf-overlay.js）。ページと同じ大きさで、位置はページに対する割合。クリックと選択は下の pdf.js の層へ通す。
-       訳している段落・ページに書かれるのを待っている段落の原文を、背景色を 0.45 で重ねて薄く見せる（ページの翻訳の data-plamo-working と同じ 0.55）。 */
+    /* 途中の訳文をページの上に重ねる。クリックと選択は下の pdf.js の層へ通す。 */
     .mw-layer { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
-    .mw-mark { position: absolute; opacity: .45; transition: opacity .35s ease-out; }
+    .mw-mark { position: absolute; opacity: .45; }
+    #viewerContainer .mw-mark[data-preview] {
+      box-sizing: border-box; overflow: hidden; display: flex; align-items: safe center;
+      opacity: 1; font-family: sans-serif; text-align: left; white-space: pre;
+    }
+    .mw-source-tail { opacity: .55; }
     .mw-original .mw-layer { display: none; }
     /* ページを訳したPDFのページに差し替える間、差し替える前の絵の写しを重ねる（ui/pdf-pages.js） */
     .mw-cover { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 4; pointer-events: none; }

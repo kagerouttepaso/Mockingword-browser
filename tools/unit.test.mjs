@@ -3,8 +3,9 @@ import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { pageReadable, runaway, splitLong, untranslated } from '../extension/shared/text.js';
 import { translateBatch } from '../extension/core/translator.js';
+import { streamPartial } from '../extension/core/engine.js';
 import { decode, encode, previewLine, remainingSource } from '../extension/shared/markup.js';
-import { LOG_SOURCE, MSG } from '../extension/shared/messages.js';
+import { LOG_SOURCE, MSG, PDF_BATCH_PORT } from '../extension/shared/messages.js';
 import { createPdfQueue } from '../extension/pdf/queue.js';
 import { createPdfBatchRequests } from '../extension/ui/pdf-batches.js';
 import { analyzeUx, dispatchDiagnostics, median } from './profile/replay-ux-analysis.mjs';
@@ -40,29 +41,39 @@ test('PDFのバッチの返事が逆順でも、段落がそろったページ�
   assert.deepEqual(written, [1, 0]);
 });
 
-test('PDFの中止は未完了の全バッチを取り消し、古い返事を使わずに続きから訳す', async () => {
+test('PDFの中止は未完了の全バッチを切断し、古い途中経過と返事を捨てて続きから訳す', async () => {
   const queue = createPdfQueue(new Map([[0, pdfParas('First paragraph.', 'Second paragraph.', 'Third paragraph.')]]));
   const requests = new Map();
   const cancelled = [];
-  const batches = createPdfBatchRequests(async ({ type, id, texts }) => {
-    if (type === MSG.CANCEL) cancelled.push(id);
-    else {
-      const reply = Promise.withResolvers();
-      requests.set(id, { texts, ...reply });
-      return reply.promise;
-    }
+  const batches = createPdfBatchRequests(({ name }) => {
+    assert.equal(name, PDF_BATCH_PORT);
+    let listener, requestId;
+    return {
+      onMessage: { addListener(fn) { listener = fn; } },
+      onDisconnect: { addListener() {} },
+      disconnect() { cancelled.push(requestId); },
+      postMessage({ type, id, texts }) {
+        assert.equal(type, MSG.TRANSLATE_BATCH);
+        requestId = id;
+        requests.set(id, { texts, receive: listener });
+      },
+    };
   });
+  const previews = [];
+  const preview = (id, text) => requests.get(id).receive({ type: MSG.SHOW_PARTIAL, lines: [{ i: 0, text }] });
+  const reply = (id, text) => requests.get(id).receive({ ok: true, results: [text] });
   const done = [];
   const options = {
     parallel: 3, focus: () => 0,
-    translate: batches.translate,
+    translate: (texts) => batches.translate(texts, (lines) => previews.push({ texts, lines })),
     onResult(part, _results, pages) { done.push({ part, pages }); },
   };
   const controller = new AbortController();
   const first = queue.run({ ...options, signal: controller.signal });
   await new Promise(setImmediate);
-  requests.get(1).resolve({ ok: true, results: ['最初の段落。'] });
+  reply(1, '最初の段落。');
   await new Promise(setImmediate);
+  cancelled.length = 0;
   controller.abort();
   batches.cancel();
   assert.equal(await first, true);
@@ -70,11 +81,16 @@ test('PDFの中止は未完了の全バッチを取り消し、古い返事を�
   const resumed = queue.run({ ...options, signal: new AbortController().signal });
   await new Promise(setImmediate);
   assert.deepEqual([requests.get(4).texts, requests.get(5).texts], [['Second paragraph.'], ['Third paragraph.']]);
-  for (const id of cancelled) requests.get(id).resolve({ ok: true, results: ['古い返事。'] });
+  for (const id of cancelled) {
+    preview(id, '古い途中経過。');
+    reply(id, '古い返事。');
+  }
   await new Promise(setImmediate);
   assert.deepEqual(done, [{ part: ['First paragraph.'], pages: [] }]);
-  for (const id of [4, 5]) requests.get(id).resolve({ ok: true, results: ['再開後の訳文。'] });
+  preview(5, '新しい途中経過。');
+  for (const id of [4, 5]) reply(id, '再開後の訳文。');
   assert.equal(await resumed, false);
+  assert.deepEqual(previews, [{ texts: ['Third paragraph.'], lines: [{ i: 0, text: '新しい途中経過。' }] }]);
   assert.deepEqual(done.flatMap(({ pages }) => pages), [0]);
 });
 
@@ -151,11 +167,20 @@ test('translateBatch：モデルが1段落を複数行に分けて返しても�
   mock.method(console, 'warn', () => {});
   const texts = ['Alpha paragraph.', 'Beta has three sentences. One. Two.', 'Gamma paragraph.', 'Delta paragraph.'];
   const want = ['アルファの段落。', 'ベータは3文ある。\nその1。\nその2。', 'ガンマの段落。', 'デルタの段落。'];
+  const previews = [];
+  let old;
   // Offscreen Documentの代わり。原文の各行を訳し（Beta だけ3行に分ける）、offscreen.js と同じく1字ずつ runaway に通して打ち切る。
   globalThis.chrome = {
     offscreen: { hasDocument: async () => true },
     runtime: {
       sendMessage: async (m) => {
+        if (m.pageRows.length > 1) {
+          old = { requestId: m.requestId, previewId: m.previewId, pageRows: m.pageRows, text: '古い訳。\nずれた訳。' };
+          streamPartial(old);
+        } else {
+          streamPartial(old); // 訳し直しの最中に遅れて届いた、やり直し前の生成の途中経過。
+          streamPartial({ requestId: m.requestId, previewId: m.previewId, pageRows: m.pageRows, text: '新しい訳。' });
+        }
         const full = texts.filter((t) => m.prompt.includes(t)).map((t) => want[texts.indexOf(t)]).join('\n');
         let text = '';
         let keep = 0;
@@ -164,8 +189,13 @@ test('translateBatch：モデルが1段落を複数行に分けて返しても�
       },
     },
   };
-  const { results } = await translateBatch(texts, { model: 'unit-test', form: 'polite' });
+  const { results } = await translateBatch(texts, { model: 'unit-test', form: 'polite', requestId: 'pdf:unit:1', onPreview: (lines) => previews.push(lines) });
   assert.deepEqual(results, want);
+  assert.deepEqual(previews, [
+    [{ i: 0, text: '古い訳。', complete: true }, { i: 1, text: 'ずれた訳。', complete: false }],
+    texts.map((_, i) => ({ i, text: '', complete: false })),
+    ...texts.map((_, i) => [{ i, text: '新しい訳。', complete: false }]),
+  ]);
 });
 
 // ---- 段落のマーカーの文法（shared/markup.js）：壊れると、訳文から太字・リンク・コード・改行が黙って消える、原文のまま写される ----

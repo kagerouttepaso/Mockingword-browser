@@ -54,9 +54,21 @@ async function send(message) {
  */
 const streams = new Map();
 let streamSeq = 0;
+const previews = new Map();
+
+/** 生成する行の順を、キャッシュにあった行も含むバッチの行番号に戻す。 */
+export function previewRows({ text, pageRows }) {
+  const lines = text.split('\n');
+  return lines.slice(0, pageRows.length).map((text, k) => ({ i: pageRows[k], text, complete: k < lines.length - 1 }));
+}
 
 /** Offscreen Documentから届いた途中経過が、生成の途中を受け取るリクエストのものなら渡して true を返す。 */
 export function streamPartial(message) {
+  if (message.previewId != null) {
+    const onPreview = previews.get(message.previewId);
+    if (onPreview && !cancelled.has(message.requestId)) onPreview(previewRows(message));
+    return true;
+  }
   const s = streams.get(message.requestId);
   if (!s) return false;
   if (message.tokens > s.tokens) {
@@ -73,6 +85,16 @@ export function streamPartial(message) {
  * onPartial(訳文の途中)・onTokens(増えたトークン数) を渡すと、生成の途中を受け取る（ページの翻訳の requestId とは併用しない）。
  */
 export async function complete(text, options) {
+  // PDFでは、取り消し用のバッチ番号とは別に生成ごとの番号を持つ。訳し直しの開始後に古い途中経過を受け取らない。
+  if (options.onPreview && options.pageRows) {
+    const previewId = `${options.requestId}:${++streamSeq}`;
+    previews.set(previewId, options.onPreview);
+    try {
+      return await completeOnce(text, { ...options, previewId });
+    } finally {
+      previews.delete(previewId);
+    }
+  }
   const streamId = !options.requestId && (options.onPartial || options.onTokens) ? `stream:${++streamSeq}` : null;
   if (!streamId) return completeOnce(text, options);
   const s = { onPartial: options.onPartial, onTokens: options.onTokens, tokens: 0 };
@@ -104,6 +126,7 @@ async function completeOnce(text, options) {
     lines: text.split('\n').length,
     sourceChars: text.length, // 訳文が原文よりずっと長くなるまでは、繰り返しで打ち切らない
     pageRows: options.pageRows, // 生成する行 → キャッシュにあった行も含むページ側の行
+    previewId: options.previewId,
     stream: !!options.stream, // 行の区切りを待たず、0.1秒おきに途中を知らせてもらう（テキスト翻訳）
     noCache: !!options.noCache, // 速さの調整だけ：前のリクエストの読み込み済み原文を使わせない（background/tune.js）
     stop: STOP,

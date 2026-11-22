@@ -34,7 +34,7 @@ export const MSG = {
 
   // Offscreen Document（offscreen/）→ Service Worker
   MODEL_PROGRESS: 'local-progress', // { model, loaded, total }
-  PARTIAL: 'partial', // { requestId, text, pageRows?, tokens }：生成の途中（ページは文末まで、テキスト翻訳は全文）
+  PARTIAL: 'partial', // { requestId, previewId?, text, pageRows?, tokens }：生成の途中（Web・PDFは文末まで、テキスト翻訳は全文）
 
   // Service Worker → 設定画面
   TUNE_PROGRESS: 'tune-progress', // { text?, rows? }：速さの調整の途中経過
@@ -61,6 +61,7 @@ export const MSG = {
 };
 
 export const OFFSCREEN = 'offscreen';
+export const PDF_BATCH_PORT = 'pdf-batch'; // 1バッチの依頼・途中表示・結果。切断で取り消す
 
 /** ページ側の調査用のログの頭。計測ツール（tools/page-replay.mjs・tools/bench.mjs）もこれで行を拾う（名前を変えたときにツールが黙って行を拾えなくなった。2026-11-16）。 */
 export const LOG_TAG = '[Mockingword]';

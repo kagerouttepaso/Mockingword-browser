@@ -215,7 +215,7 @@ async function generate(message, controller) {
   let keep = 0;
   let usage = null;
   let first = 0;
-  // ページの翻訳は、完了した行と最後の行の文末までを、変化したときだけ0.25秒おきまでに知らせる。
+  // Web・PDFの翻訳は、完了した行と最後の行の文末までを、変化したときだけ0.25秒おきまでに知らせる。
   // stream（テキスト翻訳）は行の区切りを待たず0.1秒おきに、生成したトークン数（受け取った回数）も添えて知らせる。
   let lastPartial = -Infinity;
   let sent = '';
@@ -228,7 +228,7 @@ async function generate(message, controller) {
     if (!message.stream && snapshot === sent) return;
     sent = snapshot;
     chrome.runtime.sendMessage({ type: MSG.PARTIAL, requestId: message.requestId, text: snapshot,
-      pageRows: message.pageRows, tokens: pieces }).catch(() => {});
+      pageRows: message.pageRows, previewId: message.previewId, tokens: pieces }).catch(() => {});
   };
   const pagePreview = () => {
     const lines = text.split('\n');

@@ -89,7 +89,8 @@ export async function translateBatch(texts, options) {
     stats.fallback = true; // 行がずれた・打ち切ったら、このバッチは1つずつ訳し直す
     redo.push(...pending);
   }
-  for (const i of redo) await one(i);
+  if (redo.length && options.onPreview) options.onPreview(redo.map((i) => ({ i, text: '', complete: false })));
+  for (const i of redo) await one(i, !!options.onPreview);
   return { results, stats };
 }
 

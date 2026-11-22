@@ -2,9 +2,9 @@
 // 数百ページの PDF でも画面の操作を止めない。翻訳は Worker から頼めない（chrome.* が無い）ので、画面に頼んで結果を受け取る。
 //
 // 画面 → Worker：{ type: 'open', bytes }・{ type: 'start', parallel }（中止した後は続きから）・{ type: 'stop' }・{ type: 'focus', page }・
-//   { type: 'translated', id, results | error }・{ type: 'save' }
+//   { type: 'partial', id, lines }・{ type: 'translated', id, results | error }・{ type: 'save' }
 // Worker → 画面：{ type: 'opened', paragraphs }・{ type: 'translate', id, texts }・{ type: 'status', list, status }・
-//   { type: 'version', bytes, pages }・{ type: 'titles', entries }・{ type: 'stage', stage, done, total }・
+//   { type: 'preview', list }・{ type: 'version', bytes, pages }・{ type: 'titles', entries }・{ type: 'stage', stage, done, total }・
 //   { type: 'done', stats }・{ type: 'saved', result }・{ type: 'error', during, message }
 import { paragraphBox } from './plan.js';
 import { openPdfJob } from './translate.js';
@@ -14,14 +14,17 @@ let focus = 0;
 let seq = 0;
 const waiting = new Map();
 
-/** 画面へ渡す段落の要約（半透明の表示を置く位置と色）。 */
-const brief = (p) => ({ id: p.id, page: p.page, box: paragraphBox(p), background: p.background ?? null });
+/** 画面へ渡す段落の位置・色・書式と、確定した段落の訳文。 */
+const brief = (p, status) => ({
+  id: p.id, page: p.page, box: paragraphBox(p), background: p.background, color: p.color,
+  size: p.size, lead: p.lead, pieces: status === 'done' ? p.pieces : [],
+});
 
-function translate(texts, signal) {
+function translate(texts, signal, onPartial) {
   const id = ++seq;
   const abort = () => waiting.get(id)?.reject(signal.reason);
   return new Promise((resolve, reject) => {
-    waiting.set(id, { resolve, reject });
+    waiting.set(id, { resolve, reject, onPartial });
     signal.addEventListener('abort', abort, { once: true });
     postMessage({ type: 'translate', id, texts });
   }).finally(() => {
@@ -36,7 +39,8 @@ async function start(parallel) {
       translate, parallel,
       focus: () => focus,
       onStage: (stage) => postMessage({ type: 'stage', ...stage }),
-      onStatus: (list, status) => { if (list.length) postMessage({ type: 'status', list: list.map(brief), status }); },
+      onStatus: (list, status) => { if (list.length) postMessage({ type: 'status', list: list.map((p) => brief(p, status)), status }); },
+      onPreview: (list) => postMessage({ type: 'preview', list }),
       onVersion: ({ bytes, pages }) => postMessage({ type: 'version', bytes, pages }, [bytes.buffer]),
       onTitles: (titles) => { if (titles.size) postMessage({ type: 'titles', entries: [...titles] }); },
     });
@@ -54,6 +58,7 @@ onmessage = async ({ data: m }) => {
     } else if (m.type === 'start') start(m.parallel);
     else if (m.type === 'stop') job?.stop();
     else if (m.type === 'focus') focus = m.page;
+    else if (m.type === 'partial') waiting.get(m.id)?.onPartial(m.lines);
     else if (m.type === 'translated') {
       const w = waiting.get(m.id);
       if (m.error) w?.reject(new Error(m.error));

@@ -65,6 +65,6 @@ offscreen は温度0に固定した翻訳へ `backend_sampling: true`・`backend
 
 wllama・llama.cpp、および参照・移植した sakutto の部分は MIT License。出典と各ライセンス本文は [tools/wllama/licenses](../../../tools/wllama/licenses/README.md) にある。元の著作権表示と許諾文を保持する。
 
-更新時は固定入力・順序付きパッチ一覧から通常版を作り、同じ build manifest の `index.js` と `wasm/wllama.wasm` を一緒に差し替える。profile・profile-gpu の計測版を同梱しない。manifest の成果物 hash と実ファイルを照合し、この README と `docs/00_現在地.md` を更新して、通しの試験を変更の区切りの最後に1回行う。
+更新時は固定入力・順序付きパッチ一覧から通常版を作り、同じ build manifest の `index.js` と `wasm/wllama.wasm` を一緒に差し替える。profile・profile-gpu の計測版を同梱しない。manifest の成果物 hash と実ファイルを照合し、この README と `docs/変更履歴.md` を更新して、通しの試験を変更の区切りの最後に1回行う。
 
 PLaMo Community Licenseの同梱のコピーは、公式pfnet/plamo-3-translate-0.8bのcommit `8b4d42855622093e610ba9b90c2d2b59f8d5c15d` のLICENSE/ja・LICENSE/enから取得（2026-11-15）。

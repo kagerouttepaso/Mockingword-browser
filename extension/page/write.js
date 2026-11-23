@@ -190,6 +190,24 @@ export function apply(para, translation) {
 }
 
 /**
+ * 確定した訳文が、書いたとおりにページに出ているか。訳文の要素・原文のラッパーの印・隠す要素の印のどれかを
+ * サイトが消したり入れ替えたりしていれば false（page/sync.js が apply で書き直す）。
+ * 書き込みは、サイトの持ち物（文字のノードの親・要素の属性）に印を置く。印はこの関数で確かめられ、apply で付け直せるものだけにする。
+ */
+export function isShown(para) {
+  if (para.translation == null || !para.trSpan?.isConnected) return false;
+  const nodes = para.nodes.filter((n) => n.isConnected);
+  if (!nodes.every((n) => n.parentElement?.getAttribute('data-plamo-orig') === 'done')) return false;
+  return (para.hide ?? []).every((el) => !el.isConnected || el.getAttribute('data-plamo-hide') === 'done');
+}
+
+/** モデルを切り替えて訳し直すとき、確定した訳を忘れる。新しい訳が届くまでは前の訳文を見せたままにする。 */
+export function forgetTranslation(para) {
+  clearPartial(para);
+  para.translation = null;
+}
+
+/**
  * 訳している途中の段落（送ったバッチ）の属性を付ける・外す。原文の文字を包み、ラッパーに data-plamo-working を付けると、
  * page.css がその原文を少し薄くする。訳を待つだけの段落には付けない。
  */

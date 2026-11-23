@@ -129,6 +129,13 @@ try {
     return r.tr && !r.raw && r;
   }, 5000);
   t.check('描き直しで外された訳文を出し直す', !!back, JSON.stringify(back));
+  // サイトが原文のラッパーの印を消す・訳文の要素を外す（属性やノードを作り直す描き直し）と、同じ出し直しの経路で戻る（2026-11-23）。
+  await b.eval(page.session, `(() => { const p = document.getElementById('p1'); p.querySelector('[data-plamo-orig="done"]')?.setAttribute('data-plamo-orig', ''); document.getElementById('p2')?.querySelector('.plamo-tr')?.remove(); })()`);
+  const restored = await b.waitFor(async () => {
+    const r = await b.eval(page.session, `(() => { const p1 = document.getElementById('p1'); const p2 = document.getElementById('p2'); return { done: [...p1.querySelectorAll('[data-plamo-orig]')].every((w) => w.getAttribute('data-plamo-orig') === 'done'), tr: !!p2?.querySelector('.plamo-tr') }; })()`);
+    return r.done && r.tr && r;
+  }, 5000);
+  t.check('サイトが消した印・外した訳文を出し直す', !!restored, JSON.stringify(restored));
   // サイトが html の className を作り直したり属性を消したりしても、表示（ここでは対訳）を保つ（2026-11-23、Discord でキー入力のたびに訳文が隠れた件）。
   await b.eval(page.session, `document.documentElement.className = 'site-rewrite'; document.documentElement.removeAttribute('data-plamo-mode')`);
   await sleep(100);

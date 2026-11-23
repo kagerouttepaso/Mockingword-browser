@@ -1,9 +1,8 @@
 // 段落を集める。ページの文字のノードを、見た目の段落（ブロック要素）ごとにまとめ、項目のグループ（group）を決める。
 // 要素の判定は page/dom.js、段落の中身の読み取りとマーカーは page/paragraph.js。設計は docs/04_ページの翻訳.md「段落の集め方」。
 
-import { worthTranslating } from '../shared/text.js';
 import { OWN, blockOf, isInlineCode, skipElement } from './dom.js';
-import { markup } from './paragraph.js';
+import { createPara } from './para.js';
 import { state } from './state.js';
 
 
@@ -55,7 +54,7 @@ export function groupOf(element, nodes = []) {
 
 /**
  * root の下の文字を、見た目の段落ごとにまとめる。まだ集めていない文字だけを集める。
- * 段落は { element, nodes, text, marks, hide, root, group, translation, trSpan }（markup の返り値を参照）。
+ * 段落のフィールドは page/para.js。
  */
 export function collect(root) {
   // 訳さない要素（SVG・コード・入力欄など）の中なら何もしない（root 自身は絞り込みを通らないため、先に祖先を見る）。
@@ -80,14 +79,8 @@ export function collect(root) {
   }
   const added = [];
   for (const [element, nodes] of groups) {
-    const { text, plain, marks, hide, root, fontFamily } = markup(element, nodes);
-    if (!worthTranslating(plain)) continue;
-    const para = { element, nodes, text, marks, hide, root, fontFamily, group: groupOf(element, nodes), translation: null, trSpan: null };
-    for (const n of nodes) {
-      state.seen.add(n);
-      state.owner.set(n, para);
-    }
-    added.push(para);
+    const para = createPara(element, nodes);
+    if (para) added.push(para);
   }
   return added;
 }

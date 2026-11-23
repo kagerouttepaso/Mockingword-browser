@@ -28,6 +28,8 @@ export const state = {
   seen: new WeakSet(),
   /** 文字のノード→段落。書き換えられたときに訳し直すため。 */
   owner: new WeakMap(),
+  /** 隠す要素→段落。サイトが隠す印を消したときに出し直すため。 */
+  hideOwner: new WeakMap(),
   /** 書き換えの監視。 */
   observer: null,
   /** 調査用のログをService Workerへ送るか（設定の「調査用のログ」）。 */

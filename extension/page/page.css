@@ -1,10 +1,10 @@
-/* ページに差し込む見た目。訳文の表示の切り替えは、page/write.js が html 要素に plamo-mode-* を付けて行う。 */
+/* ページに差し込む見た目。訳文の表示の切り替えは、page/write.js が html 要素に data-plamo-mode（trans・orig・both）を付けて行う。 */
 /* 訳文表示で隠すのは、訳文が届いた原文（page/write.js が data-plamo-orig="done" を付ける）だけ。届く前の原文は見せたまま。 */
-html.plamo-mode-trans :is([data-plamo-orig="done"], [data-plamo-orig="partial"]) { display: none !important; }
+html[data-plamo-mode="trans"] :is([data-plamo-orig="done"], [data-plamo-orig="partial"]) { display: none !important; }
 /* 段落の中の要素（太字・コード・<br>・アイコンなど）も、訳文に写しが入るので訳文表示では隠す（page/write.js の apply）。 */
-html.plamo-mode-trans [data-plamo-hide] { display: none !important; }
-html.plamo-mode-orig .plamo-tr { display: none !important; }
-html:not(.plamo-mode-trans):not(.plamo-mode-orig):not(.plamo-mode-both) .plamo-tr { display: none !important; }
+html[data-plamo-mode="trans"] [data-plamo-hide] { display: none !important; }
+html[data-plamo-mode="orig"] .plamo-tr { display: none !important; }
+html:not([data-plamo-mode]) .plamo-tr { display: none !important; }
 
 /*
  * 訳している途中の段落（送ったバッチ）：原文を少し薄くするだけで、動かさない。
@@ -14,8 +14,8 @@ html:not(.plamo-mode-trans):not(.plamo-mode-orig):not(.plamo-mode-both) .plamo-t
  */
 [data-plamo-orig][data-plamo-working] { opacity: 0.55; }
 .plamo-source-tail { opacity: 0.55; }
-html.plamo-mode-both .plamo-source-tail { display: none !important; }
-html.plamo-mode-trans [data-plamo-preview-block] { min-block-size: var(--plamo-preview-block-size); }
+html[data-plamo-mode="both"] .plamo-source-tail { display: none !important; }
+html[data-plamo-mode="trans"] [data-plamo-preview-block] { min-block-size: var(--plamo-preview-block-size); }
 
 /* 届いた訳文は、光が消えてから0.25秒でふわっと出す。 */
 .plamo-tr { animation: plamo-arrive 0.25s ease-out; }
@@ -26,7 +26,7 @@ html.plamo-mode-trans [data-plamo-preview-block] { min-block-size: var(--plamo-p
   .plamo-tr { animation: none; }
 }
 /* 対訳：原文の下に、色を変えて訳文を出す。 */
-html.plamo-mode-both .plamo-tr {
+html[data-plamo-mode="both"] .plamo-tr {
   display: block;
   margin: 0.15em 0 0.4em;
   color: inherit;
@@ -35,7 +35,7 @@ html.plamo-mode-both .plamo-tr {
   font-size: 0.95em;
 }
 @media (prefers-color-scheme: dark) {
-  html.plamo-mode-both .plamo-tr { color: inherit; }
+  html[data-plamo-mode="both"] .plamo-tr { color: inherit; }
 }
 
 /* 選択範囲の訳と通知。ページの見た目に左右されないよう、主要な性質を固定する。 */

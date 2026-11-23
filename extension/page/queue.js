@@ -4,7 +4,7 @@
 import { MSG } from '../shared/messages.js';
 import { LOCAL_DEFAULTS, normalizeLocal } from '../shared/settings.js';
 import { chunk, groupedChunk, short } from '../shared/text.js';
-import { groupOf } from './collect.js';
+import { connected, regroup } from './para.js';
 import { barHasError, barMessage, setBarDone, showBar, updateBar } from './bar.js';
 import { clearNotice } from './bubble.js';
 import { apply, applyPartial, clearPartial, setWorking } from './write.js';
@@ -23,8 +23,6 @@ chrome.storage.onChanged.addListener((c, area) => {
   if (area === 'local' && c.parallel) workers = normalizeLocal({ parallel: c.parallel.newValue }).parallel;
 });
 
-const connected = (para) => para.nodes.some((n) => n.isConnected);
-
 /**
  * 同じ文の訳を待っている段落。「世代\n文」→ 段落の集まり。
  * 表の部署名（例：배터리3센터 が何十行も並ぶ）のように同じ文が多いページで、同じ文を何本も同時にモデルへ送らないよう、
@@ -32,6 +30,16 @@ const connected = (para) => para.nodes.some((n) => n.isConnected);
  */
 const waiting = new Map();
 const waitKey = (text) => `${state.generation}\n${text}`;
+
+/**
+ * 段落が訳す流れの中にあるか（待ち列・送信中のバッチ・同じ文の訳待ち）。ページの書き換えへの追従（page/sync.js）が、
+ * 流れの中の段落を二重に列へ入れないために使う。
+ */
+export function isQueued(para) {
+  if (state.pending.has(para)) return true;
+  for (const c of state.chunks.values()) if (c.paras.includes(para)) return true;
+  return waiting.get(waitKey(para.text))?.has(para) ?? false;
+}
 
 /** 送っているバッチ（今の世代）に含まれる文。 */
 function busyTexts() {
@@ -55,7 +63,7 @@ function nextChunk(viewportOnly) {
   for (const [, para] of scored) {
     if (unique.has(para.text)) continue;
     unique.add(para.text);
-    if (GROUP_CHUNKING) para.group = groupOf(para.element, para.nodes);
+    if (GROUP_CHUNKING) regroup(para);
     candidates.push(para);
   }
   if (GROUP_CHUNKING) {

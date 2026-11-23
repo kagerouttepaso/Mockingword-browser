@@ -60,6 +60,32 @@ test('段落の中の要素の分類は page/paragraph.js の roleOf だけで�
   assert.deepEqual(setters, ['page/write.js']);
 });
 
+test('段落のフィールドは page/para.js の PARA_FIELDS が決めたモジュールだけが書く', () => {
+  // ページ側のモジュールは Node で読み込めない（chrome・document に触れる）ので、表は本文から読む。
+  const table = code('page/para.js').match(/PARA_FIELDS = (\{[\s\S]*?\});/)[1];
+  const owners = JSON.parse(table.replace(/'/g, '"').replace(/,\s*\}/, '}'));
+  const ownerOf = new Map(Object.entries(owners).flatMap(([rel, fields]) => fields.map((f) => [f, rel])));
+  assert.ok(ownerOf.size >= 15, '表を読めていない');
+  const fields = [...ownerOf.keys()].join('|');
+  // 代入（=・??=・+=・++）と Object.assign(para, { … })。style.fontFamily のような別のオブジェクトへの代入は除く。
+  const assign = new RegExp(`(?<!style)\\.(${fields})\\s*(?:=(?!=)|\\?\\?=|\\+=|\\+\\+)`, 'g');
+  const bad = [];
+  for (const rel of sources.filter((r) => r.startsWith('page/'))) {
+    const body = code(rel);
+    for (const [, field] of body.matchAll(assign)) if (ownerOf.get(field) !== rel) bad.push(`${rel}：${field}`);
+    for (const [, keys] of body.matchAll(/Object\.assign\(para,\s*\{([^}]*)\}/g)) {
+      for (const field of keys.split(',').map((k) => k.trim().split(':')[0])) if (ownerOf.get(field) !== rel) bad.push(`${rel}：${field}`);
+    }
+  }
+  assert.deepEqual(bad, []);
+});
+
+test('サイトの書き換えへの追従は page/sync.js だけが行う（MutationObserver で段落を集め直す場所を1つにする）', () => {
+  const observers = sources.filter((rel) => rel.startsWith('page/') && /new MutationObserver/.test(code(rel)));
+  // write.js は表示の属性（data-plamo-mode）を付け直すだけで、段落には触れない。
+  assert.deepEqual(observers.sort(), ['page/sync.js', 'page/write.js']);
+});
+
 test('独自の呼び名を使わない（docs/11_設計方針.md「使わない言い換え」の表の語が、文書・コード・画面に無い）', () => {
   const repo = path.resolve(ROOT, '..');
   const policy = fs.readFileSync(path.join(repo, 'docs/11_設計方針.md'), 'utf8');

@@ -117,10 +117,10 @@ try {
   await message(b, { type: 'page-action', tabId, action: 'both' });
   await b.send('Page.navigate', { url: `http://127.0.0.1:${PORT}/p2` }, page.session);
   const next = await b.waitFor(async () => {
-    const r = await b.eval(page.session, `({ n: document.querySelectorAll('.plamo-tr').length, cls: document.documentElement.className })`);
+    const r = await b.eval(page.session, `({ n: document.querySelectorAll('.plamo-tr').length, mode: document.documentElement.getAttribute('data-plamo-mode') })`);
     return r.n >= 5 && r;
   }, 30000);
-  t.check('同じサイトの別のページも対訳のまま自動で訳す', next?.cls === 'plamo-mode-both', JSON.stringify(next));
+  t.check('同じサイトの別のページも対訳のまま自動で訳す', next?.mode === 'both', JSON.stringify(next));
   t.check('ボタンのメニューが「元のページに戻す」になる', (await toPage(b, tabId, { type: 'get-state' }))?.translating === true);
   // 描き直し（hydration）が同じ文字のノードをラッパーの外へ入れ直し、訳文を外しても、訳文に戻る（2026-11-11、行き来で冒頭が原文のまま残った件）。
   await b.eval(page.session, `(() => { const p = document.getElementById('p1'); const texts = [...p.querySelectorAll('[data-plamo-orig]')].flatMap((w) => [...w.childNodes]); p.replaceChildren(...texts); })()`);
@@ -129,10 +129,15 @@ try {
     return r.tr && !r.raw && r;
   }, 5000);
   t.check('描き直しで外された訳文を出し直す', !!back, JSON.stringify(back));
+  // サイトが html の className を作り直したり属性を消したりしても、表示（ここでは対訳）を保つ（2026-11-23、Discord でキー入力のたびに訳文が隠れた件）。
+  await b.eval(page.session, `document.documentElement.className = 'site-rewrite'; document.documentElement.removeAttribute('data-plamo-mode')`);
+  await sleep(100);
+  const kept = await b.eval(page.session, `document.documentElement.getAttribute('data-plamo-mode')`);
+  t.check('サイトが html の class・属性を書き換えても表示を保つ', kept === 'both', JSON.stringify(kept));
   await message(b, { type: 'page-action', tabId, action: 'stop' });
   await sleep(500);
-  const stopped = await b.eval(page.session, `({ tr: document.querySelectorAll('.plamo-tr').length, wraps: document.querySelectorAll('[data-plamo-orig]').length, cls: document.documentElement.className, bar: !!document.querySelector('.plamo-ui-host') })`);
-  t.check('元のページに戻す', stopped.tr === 0 && stopped.wraps === 0 && stopped.cls === '' && !stopped.bar, JSON.stringify(stopped));
+  const stopped = await b.eval(page.session, `({ tr: document.querySelectorAll('.plamo-tr').length, wraps: document.querySelectorAll('[data-plamo-orig]').length, mode: document.documentElement.getAttribute('data-plamo-mode'), bar: !!document.querySelector('.plamo-ui-host') })`);
+  t.check('元のページに戻す', stopped.tr === 0 && stopped.wraps === 0 && stopped.mode === null && !stopped.bar, JSON.stringify(stopped));
   const auto = await b.eval(b.ext, `chrome.storage.session.get(null)`);
   t.check('元に戻すと同じサイトの自動翻訳も止まる', !Object.keys(auto).some((k) => k.startsWith('auto:')));
 

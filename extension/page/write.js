@@ -1,23 +1,40 @@
-// 訳文をページに書き込む・消す。表示の切り替えは html 要素のクラスと page/page.css だけで行う
-// （plamo-mode-trans：訳文、plamo-mode-orig：原文、plamo-mode-both：対訳）。設計は docs/04_ページの翻訳.md「書き込み」。
+// 訳文をページに書き込む・消す。表示の切り替えは html 要素の data-plamo-mode と page/page.css だけで行う
+// （trans：訳文、orig：原文、both：対訳）。設計は docs/04_ページの翻訳.md「書き込み」。
 
 import { decode, previewLine, remainingSource } from '../shared/markup.js';
 import { applyTranslationFont, clearPageFonts } from './fonts.js';
 import { state } from './state.js';
 
-const MODES = ['trans', 'orig', 'both'];
+const MODE_ATTR = 'data-plamo-mode';
 
-/** 表示のクラスを付け替える。null なら外す（元のページ）。 */
-export function setModeClass(mode) {
+/** 今の表示（null は元のページ）。html 要素の属性はこの写しで、表示の正本はこちら。 */
+let displayMode = null;
+/** サイトが html 要素の属性を書き換えたときに、表示の属性を付け直す監視。 */
+let modeGuard = null;
+
+/**
+ * 表示の属性を付け替える。null なら外す（元のページ）。
+ * html 要素の class はサイトの持ち物で、丸ごと書き直すサイトがある（Discord はキーを押すと keyboard-mode へ切り替えて
+ * className を作り直し、訳文が隠れた。2026-11-23）。拡張機能自身の属性に置き、消されたら付け直す。
+ */
+export function setDisplayMode(mode) {
+  displayMode = mode ?? null;
   const html = document.documentElement;
-  html.classList.remove(...MODES.map((m) => 'plamo-mode-' + m));
-  if (mode) html.classList.add('plamo-mode-' + mode);
+  if (displayMode) {
+    if (html.getAttribute(MODE_ATTR) !== displayMode) html.setAttribute(MODE_ATTR, displayMode);
+    modeGuard ??= new MutationObserver(() => {
+      if (displayMode && html.getAttribute(MODE_ATTR) !== displayMode) html.setAttribute(MODE_ATTR, displayMode);
+    });
+    modeGuard.observe(html, { attributes: true, attributeFilter: [MODE_ATTR] });
+  } else {
+    modeGuard?.disconnect();
+    html.removeAttribute(MODE_ATTR);
+  }
 }
 
 /** 訳文を見せる表示（訳文か対訳）になっているか。 */
 export function showingTranslation() {
-  const html = document.documentElement;
-  return html.classList.contains('plamo-mode-trans') || html.classList.contains('plamo-mode-both');
+  return displayMode === 'trans' || displayMode === 'both';
 }
 
 /** 写した要素から、元の要素の id と拡張機能の印を外す。中の原文のラッパーは外し、訳文は除く。 */
@@ -193,5 +210,5 @@ export function removeAll() {
   for (const wrap of document.querySelectorAll('[data-plamo-orig]')) wrap.replaceWith(...wrap.childNodes);
   for (const el of document.querySelectorAll('[data-plamo-hide]')) el.removeAttribute('data-plamo-hide');
   clearPageFonts();
-  setModeClass(null);
+  setDisplayMode(null);
 }

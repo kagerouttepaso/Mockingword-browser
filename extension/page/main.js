@@ -11,12 +11,12 @@ import { initPageFonts } from './fonts.js';
 import { markup } from './paragraph.js';
 import { cancelStale, enqueue, pump, report, resetMeasure, showPartial } from './queue.js';
 import { log, notify, state, trace } from './state.js';
-import { apply, clearPartial, removeAll, setModeClass, setWorking, showingTranslation } from './write.js';
+import { apply, clearPartial, removeAll, setDisplayMode, setWorking, showingTranslation } from './write.js';
 
 // ---------------- 表示の切り替え ----------------
 
 function setMode(mode) {
-  setModeClass(mode);
+  setDisplayMode(mode);
   state.mode = mode;
   if (mode !== 'orig') {
     state.lastShown = mode;

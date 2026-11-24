@@ -5,8 +5,7 @@ import { MSG } from '../shared/messages.js';
 import { LOCAL_DEFAULTS, normalizeLocal } from '../shared/settings.js';
 import { chunk, groupedChunk, short } from '../shared/text.js';
 import { connected, regroup } from './para.js';
-import { barHasError, barMessage, setBarDone, showBar, updateBar } from './bar.js';
-import { clearNotice } from './bubble.js';
+import { barHasError, barMessage, setBarDone, showBar, updateBar } from './bar.js';import { clearNotice } from './bubble.js';
 import { apply, applyPartial, clearPartial, setWorking } from './write.js';
 import { isFront, markReading, onScreen, priority } from './priority.js';
 import { debug, log, notify, seconds, send, state, tokensPerSecond, trace } from './state.js';
@@ -121,7 +120,14 @@ export async function enqueue(paras) {
   }
   if (misses.length) {
     const generation = state.generation;
-    const r = await send({ type: MSG.CACHE_LOOKUP, texts: misses.map((p) => p.text) }).catch(() => null);
+    state.looking += misses.length;
+    updateBar();
+    let r;
+    try {
+      r = await send({ type: MSG.CACHE_LOOKUP, texts: misses.map((p) => p.text) }).catch(() => null);
+    } finally {
+      state.looking -= misses.length;
+    }
     if (generation !== state.generation) return; // 待つ間に訳し直し・翻訳の終了があった
     let hits = 0;
     misses.forEach((para, i) => {
@@ -274,7 +280,7 @@ export function showPartial(id, lines) {
 
 /** 訳を待つ段落も送ったバッチも無くなったら、「訳し終えました」を出す（最初のページ全体だけ）。 */
 function finishIfDone() {
-  if (state.pending.size > 0 || state.chunks.size > 0 || !state.t0) return;
+  if (state.pending.size > 0 || state.chunks.size > 0 || state.looking > 0 || !state.t0) return;
   log(`全体の訳し終わり ${seconds()}秒（${state.model}、${state.translated}段落、問い合わせ${state.requests}回、${tokensPerSecond()} tok/s）`);
   if (!state.notified) {
     state.notified = true;

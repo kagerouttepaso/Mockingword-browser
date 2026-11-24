@@ -117,7 +117,7 @@ export function updateBar() {
   if (bar.message) text = bar.message;
   else if (state.halted) text = '止まっています（訳文・対訳を押すともう一度試します）';
   else if (state.pending.size > 0) text = `訳しています… 残り ${state.pending.size} 段落${waiting()}`;
-  else if (state.chunks.size > 0) text = `訳しています…${waiting()}`;
+  else if (state.chunks.size > 0 || state.looking > 0) text = `訳しています…${waiting()}`;
   else text = bar.done || '訳し終えました';
   if (state.model && !bar.message) text += `（${state.model}）`;
   bar.status.textContent = text;
@@ -126,8 +126,8 @@ export function updateBar() {
   // 進み具合：訳し終えた段落 ÷（訳し終えた＋待っている＋送って返事を待っている段落）。
   let sending = 0;
   for (const c of state.chunks.values()) sending += c.paras.filter((p) => p.translation == null).length;
-  const total = state.translated + state.pending.size + sending;
-  const busy = state.pending.size + sending > 0;
+  const total = state.translated + state.pending.size + sending + state.looking;
+  const busy = state.pending.size + sending + state.looking > 0;
   bar.progress.classList.toggle('idle', !busy);
   if (total) bar.progress.style.width = `${Math.round((state.translated / total) * 100)}%`;
   bar.whole.style.display = state.started ? 'none' : '';

@@ -15,6 +15,11 @@ export const state = {
   all: new Set(),
   /** 送って返事を待っているバッチ。番号 → { paras, texts, t, cancelling }。古くなったら取り消す。 */
   chunks: new Map(),
+  /**
+   * キャッシュに照会している段落の数（page/queue.js の enqueue）。照会の間は pending にも chunks にも入っていないので、
+   * これを数えないと、訳し始めた直後に「訳し終えました」が出る（2026-11-24、モデルの読み込みより前に出ていた）。
+   */
+  looking: 0,
   seq: 0,
   /** 訳し直し・翻訳の終了のたびに増やす。古いメッセージの返事を捨てるため。 */
   generation: 0,

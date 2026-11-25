@@ -69,7 +69,14 @@ Google Drive rejects the update because the remote version is <strong>exactly on
 [ERROR] Push failed because the file changed before the update<br>
 [WARN] Sync completed with errors</p>
 <p id="c3">Read <strong>the <a href="https://example.com/guide">setup guide</a></strong> <img src="${ICON}" width="12" height="12" alt=""> before you change <span class="plain">the settings</span>, and run <code>npm test</code> after<br>
-every change, then call <a href="https://example.com/api"><code>navigator.share()</code></a> to report it.</p></body></html>`;
+every change, then call <a href="https://example.com/api"><code>navigator.share()</code></a> to report it.</p>
+<div id="c4" style="white-space:break-spaces"><span>Intro paragraph before blank line.
+
+Second paragraph with </span><code>@date</code><span> shortcut.
+
+</span><ul><li><span>First list item in mixed block</span></li></ul><span>
+• </span><strong><span>Task calendar:</span></strong><span> drag tasks between days.
+• </span><strong><span>Edit in place:</span></strong><span> change dates quickly.</span></div></body></html>`;
 
 const server = http.createServer((req, res) => {
   res.writeHead(200, {
@@ -189,13 +196,30 @@ try {
       img: tr?.querySelectorAll('img').length, codeLink: !!tr?.querySelector('a[href="https://example.com/api"] > code'), code: tr?.querySelectorAll('code').length, plainSpan: tr?.querySelectorAll('span.plain').length, shown,
       gapTop: Math.round((tr?.getBoundingClientRect().top ?? 0) - r.top), height: Math.round(r.height), html: tr?.innerHTML }; })()`;
   const cmTr = await b.waitFor(async () => {
-    const r = { c1: await b.eval(cm.session, PARA('c1')), c2: await b.eval(cm.session, PARA('c2')), c3: await b.eval(cm.session, PARA('c3')) };
-    return r.c1.n && r.c2.n && r.c3.n && r;
+    const r = {
+      c1: await b.eval(cm.session, PARA('c1')),
+      c2: await b.eval(cm.session, PARA('c2')),
+      c3: await b.eval(cm.session, PARA('c3')),
+      c4: await b.eval(cm.session, `(() => {
+        const d = document.getElementById('c4');
+        const ul = d.querySelector('ul');
+        const trs = [...d.querySelectorAll('.plamo-tr')];
+        const beforeUl = trs.filter((e) => !ul.contains(e) && (e.compareDocumentPosition(ul) & Node.DOCUMENT_POSITION_FOLLOWING)).length;
+        const inUl = trs.filter((e) => ul.contains(e)).length;
+        const afterUl = trs.filter((e) => !ul.contains(e) && (e.compareDocumentPosition(ul) & Node.DOCUMENT_POSITION_PRECEDING)).length;
+        const text = d.innerText;
+        return { n: trs.length, beforeUl, inUl, afterUl, hasBlank: /\\n\\n/.test(text), bullets: (text.match(/•/g) ?? []).length, lines: text.split('\\n').filter((l) => l.trim()).length, text };
+      })()`),
+    };
+    return r.c1.n && r.c2.n && r.c3.n && r.c4.n >= 5 && r;
   }, 60000);
   t.check('<br> の並ぶ段落を1つのまま訳し、訳文に改行と太字が残る', cmTr?.c1.n === 1 && cmTr.c1.br === 5 && cmTr.c1.strong === 3 && cmTr.c2.br === 3 && cmTr.c2.strong === 1, `${cmTr?.c1.html} ／ ${cmTr?.c2.html}`);
   t.check('訳文表示で原文側の <br>・太字が残らない', cmTr && cmTr.c1.shown.length === 0 && cmTr.c2.shown.length === 0 && cmTr.c3.shown.length === 0 && cmTr.c1.gapTop < 8 && cmTr.c1.height <= cmBefore * 1.2,
     `見えたままの原文の要素 ${JSON.stringify([cmTr?.c1.shown, cmTr?.c2.shown, cmTr?.c3.shown])}・上の隙間 ${cmTr?.c1.gapTop}px・高さ ${cmBefore}→${cmTr?.c1.height}px`);
   t.check('太字の中のリンク・画像・コード・中がコードだけのリンクが訳文に写り、見た目の同じ span と文の途中の <br> はマーカーにしない', cmTr?.c3.linkInBold && cmTr.c3.img === 1 && cmTr.c3.code === 2 && cmTr.c3.codeLink && cmTr.c3.br === 0 && cmTr.c3.plainSpan === 0, cmTr?.c3.html);
+  t.check('white-space: break-spaces の空行・箇条書きと、間のリスト前後の位置が保たれる',
+    cmTr?.c4.beforeUl === 2 && cmTr?.c4.inUl === 1 && cmTr?.c4.afterUl === 2 && cmTr?.c4.hasBlank && cmTr?.c4.bullets === 2 && cmTr?.c4.lines === 5,
+    JSON.stringify(cmTr?.c4));
   await message(b, { type: 'page-action', tabId: cmTab, action: 'both' });
   await sleep(300);
   const cmBoth = await b.eval(cm.session, `(() => { const p = document.getElementById('c1'); return { orig: [...p.querySelectorAll(':scope > br')].filter((x) => getComputedStyle(x).display !== 'none').length, tr: p.querySelectorAll('.plamo-tr br').length }; })()`);

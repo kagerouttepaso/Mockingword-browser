@@ -1,0 +1,586 @@
+diff --git a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
+--- a/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
++++ b/llama.cpp/ggml/src/ggml-webgpu/ggml-webgpu.cpp
+@@ -19,6 +19,7 @@
+ #include <algorithm>
+ #include <atomic>
+ #include <cstdint>
++#include <cstdio>
+ #include <cstring>
+ #ifdef GGML_WEBGPU_GPU_PROFILE
+ #    include <iomanip>
+@@ -4700,34 +4701,395 @@ static void ggml_webgpu_init_scatter_write_pipeline(webgpu_global_context & ctx)
+     ctx->set_tensor_n_pipeline = ggml_webgpu_create_pipeline(ctx->device, wgsl_set_tensor_n, "set_tensor_n", constants);
+ }
+ 
++// Mockingword：GPU の選択・デバイスの取得・検算の結果を、拡張機能が読む1行（"ggml_webgpu: report {JSON}"）で知らせる。
++// 拡張機能は GPU を自分で求めず、この報告だけを表示とログに使う（推論に使う GPU と表示がずれない）。
++struct ggml_webgpu_report {
++    std::vector<std::string> candidates;  // 求めた順の各結果（JSON のオブジェクト）
++    std::string              chosen;      // 使うアダプターを返した powerPreference
++    std::string              device;      // 取得できたデバイスの条件
++    std::string              probe;       // 検算の結果（JSON のオブジェクト）
++    std::string              error;       // GPU を使わない理由
++};
++
++static ggml_webgpu_report & ggml_webgpu_report_state() {
++    static ggml_webgpu_report report;
++    return report;
++}
++
++static std::string ggml_webgpu_json_string(const std::string & s) {
++    std::string out = "\"";
++    for (const unsigned char c : s) {
++        switch (c) {
++            case '"':
++                out += "\\\"";
++                break;
++            case '\\':
++                out += "\\\\";
++                break;
++            case '\n':
++                out += "\\n";
++                break;
++            case '\r':
++                out += "\\r";
++                break;
++            case '\t':
++                out += "\\t";
++                break;
++            default:
++                if (c < 0x20) {
++                    char buf[8];
++                    snprintf(buf, sizeof(buf), "\\u%04x", c);
++                    out += buf;
++                } else {
++                    out += static_cast<char>(c);
++                }
++        }
++    }
++    return out + "\"";
++}
++
++static std::string ggml_webgpu_json_optional(const std::string & s) {
++    return s.empty() ? std::string("null") : ggml_webgpu_json_string(s);
++}
++
++static void ggml_webgpu_emit_report(bool ready) {
++    const auto & r    = ggml_webgpu_report_state();
++    std::string  json = std::string("{\"ready\":") + (ready ? "true" : "false") + ",\"candidates\":[";
++    for (size_t i = 0; i < r.candidates.size(); i++) {
++        json += (i ? "," : "") + r.candidates[i];
++    }
++    json += "],\"chosen\":" + ggml_webgpu_json_optional(r.chosen);
++    json += ",\"device\":" + ggml_webgpu_json_optional(r.device);
++    json += ",\"probe\":" + (r.probe.empty() ? std::string("null") : r.probe);
++    json += ",\"error\":" + ggml_webgpu_json_optional(r.error) + "}";
++    GGML_LOG_INFO("ggml_webgpu: report %s\n", json.c_str());
++}
++
++static const char * ggml_webgpu_power_preference_name(wgpu::PowerPreference preference) {
++    switch (preference) {
++        case wgpu::PowerPreference::HighPerformance:
++            return "high-performance";
++        case wgpu::PowerPreference::LowPower:
++            return "low-power";
++        default:
++            return "default";
++    }
++}
++
++// high-performance・既定・low-power の3通りで求め、この順で shader-f16 を持つ最初のアダプターを使う（無ければ最初のもの）。
++// 単体GPUと内蔵GPUの両方があるPCで、ブラウザーの既定が shader-f16 の無い・遅い GPU を返すことに備える（sakutto 0007、
++// ggml-org/llama.cpp#21744）。Windows の Chrome は powerPreference を採らない（crbug 369219127）ので、3通りとも同じ GPU が返る。
++// ブラウザーが複数の GPU を見せているかを確かめられるよう、使わないものも含めて3通りすべてを report に残す。
+ static void ggml_backend_webgpu_request_adapter(wgpu::Instance & instance, wgpu::Adapter & adapter) {
+-    wgpu::RequestAdapterOptions options = {};
++    auto & report = ggml_webgpu_report_state();
++    report        = ggml_webgpu_report{};
++
++    const wgpu::PowerPreference preferences[] = {
++        wgpu::PowerPreference::HighPerformance,
++        wgpu::PowerPreference::Undefined,
++        wgpu::PowerPreference::LowPower,
++    };
++    wgpu::Adapter found[3];
++    bool          has_f16[3] = { false, false, false };
++
++    for (size_t i = 0; i < 3; i++) {
++        wgpu::RequestAdapterOptions options = {};
++        options.powerPreference             = preferences[i];
++
++#if !defined(__EMSCRIPTEN__) && !defined(__wasi__)
++        // TODO: track need for these toggles: https://issues.chromium.org/issues/42251215
++        const char * const          adapterEnabledToggles[] = { "vulkan_enable_f16_on_nvidia", "use_vulkan_memory_model" };
++        wgpu::DawnTogglesDescriptor adapterTogglesDesc;
++        adapterTogglesDesc.enabledToggles     = adapterEnabledToggles;
++        adapterTogglesDesc.enabledToggleCount = 2;
++        options.nextInChain                   = &adapterTogglesDesc;
++#endif
++
++        std::string error;
++        instance.WaitAny(
++            instance.RequestAdapter(
++                &options, wgpu::CallbackMode::AllowSpontaneous,
++                [&found, &error, i](wgpu::RequestAdapterStatus status, wgpu::Adapter _adapter, wgpu::StringView message) {
++                    if (status != wgpu::RequestAdapterStatus::Success) {
++                        error = std::string(message);
++                        return;
++                    }
++                    found[i] = std::move(_adapter);
++                }),
++            UINT64_MAX);
++
++        const std::string preference = ggml_webgpu_power_preference_name(preferences[i]);
++        if (found[i] == nullptr) {
++            GGML_LOG_ERROR("ggml_webgpu: Failed to get an adapter (%s): %s\n", preference.c_str(), error.c_str());
++            report.candidates.push_back("{\"preference\":" + ggml_webgpu_json_string(preference) +
++                                        ",\"error\":" + ggml_webgpu_json_string(error) + "}");
++            continue;
++        }
++        wgpu::AdapterInfo info{};
++        found[i].GetInfo(&info);
++        has_f16[i]               = found[i].HasFeature(wgpu::FeatureName::ShaderF16);
++        const bool has_subgroups = found[i].HasFeature(wgpu::FeatureName::Subgroups);
++        report.candidates.push_back(
++            "{\"preference\":" + ggml_webgpu_json_string(preference) +
++            ",\"vendor\":" + ggml_webgpu_json_string(std::string(info.vendor)) +
++            ",\"architecture\":" + ggml_webgpu_json_string(std::string(info.architecture)) +
++            ",\"device\":" + ggml_webgpu_json_string(std::string(info.device)) +
++            ",\"description\":" + ggml_webgpu_json_string(std::string(info.description)) +
++            ",\"vendorId\":" + std::to_string(info.vendorID) + ",\"deviceId\":" + std::to_string(info.deviceID) +
++            ",\"shaderF16\":" + (has_f16[i] ? "true" : "false") + ",\"subgroups\":" + (has_subgroups ? "true" : "false") +
++            ",\"subgroupMinSize\":" + std::to_string(info.subgroupMinSize) +
++            ",\"subgroupMaxSize\":" + std::to_string(info.subgroupMaxSize) + "}");
++    }
++
++    size_t pick = 3;
++    for (size_t i = 0; i < 3 && pick == 3; i++) {
++        if (found[i] != nullptr && has_f16[i]) {
++            pick = i;
++        }
++    }
++    for (size_t i = 0; i < 3 && pick == 3; i++) {
++        if (found[i] != nullptr) {
++            pick = i;
++        }
++    }
++    if (pick < 3) {
++        adapter       = found[pick];
++        report.chosen = ggml_webgpu_power_preference_name(preferences[pick]);
++    }
++}
++
++// AMD・Intel の D3D12 は 2 GiB - 4 までのことが多い。再試行の2段目で、アダプターの上限より低く抑えた値を求める。
++static void ggml_webgpu_cap_storage_limits(wgpu::Limits & limits) {
++    const uint64_t cap = 2147483644ull;
++    if (limits.maxStorageBufferBindingSize > cap) {
++        limits.maxStorageBufferBindingSize = cap;
++    }
++    if (limits.maxBufferSize > cap) {
++        limits.maxBufferSize = cap;
++    }
++}
++
++static bool ggml_webgpu_try_request_device(ggml_backend_webgpu_reg_context *     ctx,
++                                           const std::vector<wgpu::FeatureName> & features,
++                                           const wgpu::Limits *                   limits,
++                                           const char *                           label) {
++    wgpu::DeviceDescriptor dev_desc;
++    dev_desc.requiredLimits       = limits;
++    dev_desc.requiredFeatures     = features.data();
++    dev_desc.requiredFeatureCount = features.size();
++    dev_desc.SetDeviceLostCallback(
++        wgpu::CallbackMode::AllowSpontaneous,
++        [](const wgpu::Device & device, wgpu::DeviceLostReason reason, wgpu::StringView message) {
++            if (reason == wgpu::DeviceLostReason::Destroyed) {
++                return;
++            }
++            GGML_UNUSED(device);
++            GGML_LOG_ERROR("ggml_webgpu: Device lost! Reason: %d, Message: %s\n", static_cast<int>(reason),
++                           std::string(message).c_str());
++        });
++    dev_desc.SetUncapturedErrorCallback(
++        [](const wgpu::Device & device, wgpu::ErrorType reason, wgpu::StringView message) {
++            GGML_UNUSED(device);
++            GGML_ABORT("ggml_webgpu: Device error! Reason: %d, Message: %s\n", static_cast<int>(reason),
++                       std::string(message).c_str());
++        });
+ 
+ #if !defined(__EMSCRIPTEN__) && !defined(__wasi__)
+-    // TODO: track need for these toggles: https://issues.chromium.org/issues/42251215
+-    const char * const          adapterEnabledToggles[] = { "vulkan_enable_f16_on_nvidia", "use_vulkan_memory_model" };
+-    wgpu::DawnTogglesDescriptor adapterTogglesDesc;
+-    adapterTogglesDesc.enabledToggles     = adapterEnabledToggles;
+-    adapterTogglesDesc.enabledToggleCount = 2;
+-    options.nextInChain                   = &adapterTogglesDesc;
++    // Enable Dawn-specific toggles to increase native performance
++    const char * const          deviceEnabledToggles[]  = { "disable_robustness", "disable_workgroup_init",
++                                                            "disable_polyfills_on_integer_div_and_mod" };
++    const char * const          deviceDisabledToggles[] = { "timestamp_quantization" };
++    wgpu::DawnTogglesDescriptor deviceTogglesDesc;
++    deviceTogglesDesc.enabledToggles      = deviceEnabledToggles;
++    deviceTogglesDesc.enabledToggleCount  = 3;
++    deviceTogglesDesc.disabledToggles     = deviceDisabledToggles;
++    deviceTogglesDesc.disabledToggleCount = 1;
++    dev_desc.nextInChain                  = &deviceTogglesDesc;
+ #endif
+ 
+-    instance.WaitAny(
+-        instance.RequestAdapter(
+-            &options, wgpu::CallbackMode::AllowSpontaneous,
+-            [&adapter](wgpu::RequestAdapterStatus status, wgpu::Adapter _adapter, wgpu::StringView message) {
+-                if (status != wgpu::RequestAdapterStatus::Success) {
+-                    GGML_LOG_ERROR("ggml_webgpu: Failed to get an adapter: %s\n", std::string(message).c_str());
++    std::string error;
++    ctx->webgpu_global_ctx->instance.WaitAny(
++        ctx->webgpu_global_ctx->adapter.RequestDevice(
++            &dev_desc, wgpu::CallbackMode::AllowSpontaneous,
++            [ctx, &error](wgpu::RequestDeviceStatus status, wgpu::Device device, wgpu::StringView message) {
++                if (status != wgpu::RequestDeviceStatus::Success) {
++                    error = std::string(message);
+                     return;
+                 }
+-                adapter = std::move(_adapter);
++                ctx->webgpu_global_ctx->device = std::move(device);
+             }),
+         UINT64_MAX);
++
++    if (ctx->webgpu_global_ctx->device != nullptr) {
++        ggml_webgpu_report_state().device = label;
++        return true;
++    }
++    GGML_LOG_ERROR("ggml_webgpu: Failed to get a device (%s): %s\n", label, error.c_str());
++    return false;
++}
++
++static void ggml_webgpu_disable_subgroups(webgpu_capabilities & caps) {
++    caps.supports_subgroups       = false;
++    caps.supports_subgroup_matrix = false;
++    caps.min_subgroup_size        = 0;
++    caps.max_subgroup_size        = 0;
++}
++
++// シェーダーの選択（enable subgroups）は、アダプターではなく取得できたデバイスに合わせる。
++// subgroups を持っていても大きさが分からなければ使わない（大きさを推測すると集計を誤り、訳が崩れる）。
++static void ggml_webgpu_apply_granted_device_caps(ggml_backend_webgpu_reg_context * ctx) {
++    auto & device = ctx->webgpu_global_ctx->device;
++    auto & caps   = ctx->webgpu_global_ctx->capabilities;
++    device.GetLimits(&caps.limits);
++    caps.supports_subgroups = device.HasFeature(wgpu::FeatureName::Subgroups);
++    if (caps.supports_subgroups && (caps.min_subgroup_size == 0 || caps.max_subgroup_size == 0 ||
++                                    caps.max_subgroup_size < caps.min_subgroup_size)) {
++        ggml_webgpu_disable_subgroups(caps);
++    }
++#if !defined(__EMSCRIPTEN__) && !defined(__wasi__)
++    if (!device.HasFeature(wgpu::FeatureName::ChromiumExperimentalSubgroupMatrix)) {
++        caps.supports_subgroup_matrix = false;
++    }
++#endif
++}
++
++static constexpr uint32_t GGML_WEBGPU_PROBE_ADD_SUM = 136;  // 1+...+16
++static constexpr uint32_t GGML_WEBGPU_PROBE_BUF_U32 = 16;
++
++static const char * ggml_webgpu_probe_add_wgsl() {
++    return R"(
++@group(0) @binding(0) var<storage, read_write> out: array<u32>;
++var<workgroup> tmp: array<u32, 16>;
++@compute @workgroup_size(16)
++fn main(@builtin(local_invocation_index) li: u32) {
++    tmp[li] = li + 1u;
++    workgroupBarrier();
++    if (li == 0u) {
++        var s = 0u;
++        for (var i = 0u; i < 16u; i++) {
++            s += tmp[i];
++        }
++        out[0] = s;
++    }
++}
++)";
++}
++
++static const char * ggml_webgpu_probe_subgroup_wgsl() {
++    return R"(
++enable subgroups;
++@group(0) @binding(0) var<storage, read_write> out: array<u32>;
++@compute @workgroup_size(128)
++fn main(@builtin(subgroup_size) sg: u32, @builtin(local_invocation_index) li: u32) {
++    if (li == 0u) {
++        out[0] = sg;
++    }
++}
++)";
++}
++
++static bool ggml_webgpu_run_u32_probe(ggml_backend_webgpu_reg_context * ctx,
++                                      const char *                      wgsl,
++                                      const char *                      label,
++                                      uint32_t *                        out_value) {
++    auto & device = ctx->webgpu_global_ctx->device;
++    auto & queue  = ctx->webgpu_global_ctx->queue;
++    if (device == nullptr || queue == nullptr) {
++        return false;
++    }
++
++    const size_t bytes = GGML_WEBGPU_PROBE_BUF_U32 * sizeof(uint32_t);
++    wgpu::Buffer gpu_buf;
++    wgpu::Buffer host_buf;
++    ggml_webgpu_create_buffer(device, gpu_buf, bytes, wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopySrc, label);
++    ggml_webgpu_create_buffer(device, host_buf, bytes, wgpu::BufferUsage::MapRead | wgpu::BufferUsage::CopyDst,
++                              "probe_host");
++    if (gpu_buf == nullptr || host_buf == nullptr) {
++        return false;
++    }
++
++    webgpu_pipeline pipeline = ggml_webgpu_create_pipeline(device, wgsl, label);
++    if (pipeline.pipeline == nullptr) {
++        gpu_buf.Destroy();
++        host_buf.Destroy();
++        return false;
++    }
++
++    wgpu::BindGroupEntry      entry = ggml_webgpu_make_bind_group_entry(0, gpu_buf, 0, bytes);
++    wgpu::BindGroupDescriptor bind_group_desc;
++    bind_group_desc.layout     = pipeline.pipeline.GetBindGroupLayout(0);
++    bind_group_desc.entryCount = 1;
++    bind_group_desc.entries    = &entry;
++    bind_group_desc.label      = label;
++    wgpu::BindGroup bind_group = device.CreateBindGroup(&bind_group_desc);
++
++    wgpu::CommandEncoder     encoder = device.CreateCommandEncoder();
++    wgpu::ComputePassEncoder pass    = encoder.BeginComputePass();
++    pass.SetPipeline(pipeline.pipeline);
++    pass.SetBindGroup(0, bind_group);
++    pass.DispatchWorkgroups(1, 1, 1);
++    pass.End();
++    encoder.CopyBufferToBuffer(gpu_buf, 0, host_buf, 0, bytes);
++    wgpu::CommandBuffer commands = encoder.Finish();
++    queue.Submit(1, &commands);
++    ggml_backend_webgpu_wait_queue(ctx->webgpu_global_ctx);
++    ggml_backend_webgpu_map_buffer(ctx->webgpu_global_ctx, host_buf, wgpu::MapMode::Read, 0, bytes);
++    const uint32_t * mapped = static_cast<const uint32_t *>(host_buf.GetConstMappedRange(0, bytes));
++    const bool       ok     = mapped != nullptr;
++    if (ok) {
++        *out_value = mapped[0];
++    }
++    host_buf.Unmap();
++    gpu_buf.Destroy();
++    host_buf.Destroy();
++    return ok;
++}
++
++// 答えの分かる小さな計算で GPU を確かめる（sakutto 0007）。workgroup の足し算が合わなければ GPU を使わない。
++// subgroups を使うときは実際の subgroup_size を読み、報告された範囲に無ければ subgroups を切って workgroup の集計を使う。
++static bool ggml_webgpu_correctness_probe(ggml_backend_webgpu_reg_context * ctx) {
++    auto &   caps    = ctx->webgpu_global_ctx->capabilities;
++    auto &   report  = ggml_webgpu_report_state();
++    uint32_t add_sum = 0;
++    if (!ggml_webgpu_run_u32_probe(ctx, ggml_webgpu_probe_add_wgsl(), "correctness_add", &add_sum)) {
++        report.error = "correctness probe could not run";
++        return false;
++    }
++    if (add_sum != GGML_WEBGPU_PROBE_ADD_SUM) {
++        report.error = "correctness probe add " + std::to_string(add_sum) + " != " + std::to_string(GGML_WEBGPU_PROBE_ADD_SUM);
++        return false;
++    }
++
++    uint32_t    subgroup_size = 0;
++    std::string subgroup_note;
++    if (caps.supports_subgroups) {
++        if (!ggml_webgpu_run_u32_probe(ctx, ggml_webgpu_probe_subgroup_wgsl(), "correctness_subgroup", &subgroup_size)) {
++            subgroup_note = "subgroup shader failed";
++            ggml_webgpu_disable_subgroups(caps);
++        } else if (subgroup_size == 0 || subgroup_size < caps.min_subgroup_size ||
++                   subgroup_size > caps.max_subgroup_size) {
++            subgroup_note = "subgroup_size " + std::to_string(subgroup_size) + " not in [" +
++                            std::to_string(caps.min_subgroup_size) + "," + std::to_string(caps.max_subgroup_size) + "]";
++            ggml_webgpu_disable_subgroups(caps);
++        }
++    }
++    report.probe = "{\"add\":" + std::to_string(add_sum) + ",\"subgroups\":" + (caps.supports_subgroups ? "true" : "false") +
++                   ",\"subgroupSize\":" + std::to_string(subgroup_size) +
++                   ",\"note\":" + ggml_webgpu_json_optional(subgroup_note) + "}";
++    return true;
+ }
+ 
+ static void create_webgpu_device(ggml_backend_webgpu_reg_context * ctx) {
++    if (ctx->webgpu_global_ctx->device != nullptr) {
++        return;
++    }
++    auto & report = ggml_webgpu_report_state();
+     ggml_backend_webgpu_request_adapter(ctx->webgpu_global_ctx->instance, ctx->webgpu_global_ctx->adapter);
+-    GGML_ASSERT(ctx->webgpu_global_ctx->adapter != nullptr);
++    if (ctx->webgpu_global_ctx->adapter == nullptr) {
++        report.error = "no adapter";
++        ggml_webgpu_emit_report(false);
++        return;
++    }
+ 
+     ctx->webgpu_global_ctx->adapter.GetLimits(&ctx->webgpu_global_ctx->capabilities.limits);
+ 
+@@ -4772,88 +5134,82 @@ static void create_webgpu_device(ggml_backend_webgpu_reg_context * ctx) {
+ 
+     // Runtime subgroup size can be any supported size in this range. Shaders
+     // that allocate per-lane register arrays must size them for the minimum.
+-    ctx->webgpu_global_ctx->capabilities.min_subgroup_size = info.subgroupMinSize;
+-    ctx->webgpu_global_ctx->capabilities.max_subgroup_size = info.subgroupMaxSize;
+-    // Initialize device
+-    std::vector<wgpu::FeatureName> required_features       = { wgpu::FeatureName::ShaderF16 };
++    // 大きさが分からない・不正なら推測せず subgroups を使わない。
++    uint32_t min_sg = info.subgroupMinSize;
++    uint32_t max_sg = info.subgroupMaxSize;
++    if (min_sg == 0 || max_sg == 0 || max_sg < min_sg) {
++        ctx->webgpu_global_ctx->capabilities.supports_subgroups = false;
++        min_sg                                                  = 0;
++        max_sg                                                  = 0;
++    }
++    ctx->webgpu_global_ctx->capabilities.min_subgroup_size = min_sg;
++    ctx->webgpu_global_ctx->capabilities.max_subgroup_size = max_sg;
++
++    if (!ctx->webgpu_global_ctx->adapter.HasFeature(wgpu::FeatureName::ShaderF16)) {
++        report.error = "adapter lacks shader-f16";
++        ggml_webgpu_emit_report(false);
++        return;
++    }
++
++    std::vector<wgpu::FeatureName> features_f16  = { wgpu::FeatureName::ShaderF16 };
++    std::vector<wgpu::FeatureName> features_full = features_f16;
+ 
+ #if !defined(__EMSCRIPTEN__) && !defined(__wasi__)
+-    required_features.push_back(wgpu::FeatureName::ImplicitDeviceSynchronization);
++    features_f16.push_back(wgpu::FeatureName::ImplicitDeviceSynchronization);
++    features_full.push_back(wgpu::FeatureName::ImplicitDeviceSynchronization);
+     if (ctx->webgpu_global_ctx->capabilities.supports_subgroup_matrix) {
+-        required_features.push_back(wgpu::FeatureName::ChromiumExperimentalSubgroupMatrix);
++        features_full.push_back(wgpu::FeatureName::ChromiumExperimentalSubgroupMatrix);
+     }
+ #endif
+ 
+     if (ctx->webgpu_global_ctx->capabilities.supports_subgroups) {
+-        required_features.push_back(wgpu::FeatureName::Subgroups);
++        features_full.push_back(wgpu::FeatureName::Subgroups);
+     }
+ 
+ #ifdef GGML_WEBGPU_GPU_PROFILE
+-    required_features.push_back(wgpu::FeatureName::TimestampQuery);
++    features_f16.push_back(wgpu::FeatureName::TimestampQuery);
++    features_full.push_back(wgpu::FeatureName::TimestampQuery);
+ #endif
+ 
+-    wgpu::DeviceDescriptor dev_desc;
+-    dev_desc.requiredLimits       = &ctx->webgpu_global_ctx->capabilities.limits;
+-    dev_desc.requiredFeatures     = required_features.data();
+-    dev_desc.requiredFeatureCount = required_features.size();
+-    dev_desc.SetDeviceLostCallback(
+-        wgpu::CallbackMode::AllowSpontaneous,
+-        [](const wgpu::Device & device, wgpu::DeviceLostReason reason, wgpu::StringView message) {
+-            if (reason == wgpu::DeviceLostReason::Destroyed) {
+-                return;
+-            }
+-            GGML_UNUSED(device);
+-            GGML_LOG_ERROR("ggml_webgpu: Device lost! Reason: %d, Message: %s\n", static_cast<int>(reason),
+-                           std::string(message).c_str());
+-        });
+-    dev_desc.SetUncapturedErrorCallback(
+-        [](const wgpu::Device & device, wgpu::ErrorType reason, wgpu::StringView message) {
+-            GGML_UNUSED(device);
+-            GGML_ABORT("ggml_webgpu: Device error! Reason: %d, Message: %s\n", static_cast<int>(reason),
+-                       std::string(message).c_str());
+-        });
+-
+-#if !defined(__EMSCRIPTEN__) && !defined(__wasi__)
+-    // Enable Dawn-specific toggles to increase native performance
+-    // TODO: Maybe WebGPU needs a "fast" mode where you can request compilers skip adding checks like these,
+-    //       only for native performance?
+-    const char * const          deviceEnabledToggles[]  = { "disable_robustness", "disable_workgroup_init",
+-                                                            "disable_polyfills_on_integer_div_and_mod" };
+-    const char * const          deviceDisabledToggles[] = { "timestamp_quantization" };
+-    wgpu::DawnTogglesDescriptor deviceTogglesDesc;
+-    deviceTogglesDesc.enabledToggles      = deviceEnabledToggles;
+-    deviceTogglesDesc.enabledToggleCount  = 3;
+-    deviceTogglesDesc.disabledToggles     = deviceDisabledToggles;
+-    deviceTogglesDesc.disabledToggleCount = 1;
+-
+-    dev_desc.nextInChain = &deviceTogglesDesc;
+-#endif
++    // アダプターの上限 → 2 GiB - 4 に抑えた上限 → 既定の上限 → shader-f16 だけ、の順に求める（sakutto 0007）。
++    // 上限だけを下げる段では subgroups を外さない（アダプターが持つのに外すと、enable subgroups の WGSL が通らない）。
++    // 最後の段で取れたデバイスに合わせて、使うシェーダーを決め直す。
++    wgpu::Limits limits_max = ctx->webgpu_global_ctx->capabilities.limits;
++    wgpu::Limits limits_cap = limits_max;
++    ggml_webgpu_cap_storage_limits(limits_cap);
++    const bool ok =
++        ggml_webgpu_try_request_device(ctx, features_full, &limits_max, "adapter-max-limits optional-features") ||
++        ggml_webgpu_try_request_device(ctx, features_full, &limits_cap, "capped-limits optional-features") ||
++        ggml_webgpu_try_request_device(ctx, features_full, nullptr, "default-limits optional-features") ||
++        ggml_webgpu_try_request_device(ctx, features_f16, nullptr, "default-limits shader-f16");
++    if (!ok) {
++        report.error = "no device after retries";
++        ggml_webgpu_emit_report(false);
++        return;
++    }
+ 
+-    ctx->webgpu_global_ctx->instance.WaitAny(
+-        ctx->webgpu_global_ctx->adapter.RequestDevice(
+-            &dev_desc, wgpu::CallbackMode::AllowSpontaneous,
+-            [ctx](wgpu::RequestDeviceStatus status, wgpu::Device device, wgpu::StringView message) {
+-                if (status != wgpu::RequestDeviceStatus::Success) {
+-                    GGML_LOG_ERROR("ggml_webgpu: Failed to get a device: %s\n", std::string(message).c_str());
+-                    return;
+-                }
+-                ctx->webgpu_global_ctx->device = std::move(device);
+-            }),
+-        UINT64_MAX);
+-    GGML_ASSERT(ctx->webgpu_global_ctx->device != nullptr);
++    ggml_webgpu_apply_granted_device_caps(ctx);
++    ctx->webgpu_global_ctx->queue = ctx->webgpu_global_ctx->device.GetQueue();
++    if (!ggml_webgpu_correctness_probe(ctx)) {
++        ctx->webgpu_global_ctx->device.Destroy();
++        ctx->webgpu_global_ctx->device = nullptr;
++        ctx->webgpu_global_ctx->queue  = nullptr;
++        ggml_webgpu_emit_report(false);
++        return;
++    }
+ 
+     ggml_webgpu_init_memset_pipeline(ctx->webgpu_global_ctx);
+     ggml_webgpu_init_scatter_write_pipeline(ctx->webgpu_global_ctx);
+     ggml_webgpu_create_buffer(ctx->webgpu_global_ctx->device, ctx->webgpu_global_ctx->memset_params_buf,
+                               WEBGPU_PARAMS_BUF_SIZE_BYTES, wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::Uniform,
+                               "memset_params_buf");
+-    ctx->webgpu_global_ctx->queue = ctx->webgpu_global_ctx->device.GetQueue();
+ 
+     GGML_LOG_INFO(
+         "ggml_webgpu: adapter_info: vendor_id: %u | vendor: %s | architecture: %s | device_id: %u | name: %s | "
+         "device_desc: %s\n",
+         info.vendorID, std::string(info.vendor).c_str(), std::string(info.architecture).c_str(), info.deviceID,
+         std::string(info.device).c_str(), std::string(info.description).c_str());
++    ggml_webgpu_emit_report(true);
+ }
+ 
+ static webgpu_context initialize_webgpu_context(ggml_backend_dev_t dev) {
+@@ -5503,18 +5859,13 @@ ggml_backend_reg_t ggml_backend_webgpu_reg() {
+     ctx->webgpu_global_ctx           = webgpu_global_context(new webgpu_global_context_struct());
+     ctx->webgpu_global_ctx->instance = std::move(inst);
+ 
+-    // Probe for adapter support
+-    wgpu::Adapter adapter;
++    // 登録の時点でアダプターとデバイスを取り、検算まで通ったときだけ device_count を1にする。
++    // 以前は後のデバイス取得の失敗が GGML_ASSERT で WASM ごと止まった（ggml-org/llama.cpp#23844）。
++    // 報告（ggml_webgpu: report）もこの時点で出る。
+     if (ctx->webgpu_global_ctx->instance != nullptr) {
+-        ggml_backend_webgpu_request_adapter(ctx->webgpu_global_ctx->instance, adapter);
++        create_webgpu_device(ctx);
+     }
+-
+-    // WebGPU backend requires f16 support and, on native, implicit device synchronization.
+-    if (adapter != nullptr && adapter.HasFeature(wgpu::FeatureName::ShaderF16)
+-#if !defined(__EMSCRIPTEN__) && !defined(__wasi__)
+-        && adapter.HasFeature(wgpu::FeatureName::ImplicitDeviceSynchronization)
+-#endif
+-    ) {
++    if (ctx->webgpu_global_ctx->device != nullptr) {
+         ctx->device_count = 1;
+     }
+ 

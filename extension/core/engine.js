@@ -149,6 +149,12 @@ export async function status() {
   return (await send({ type: MSG.MODEL_STATUS })) ?? { loaded: null };
 }
 
+/** 使う GPU を確かめる（offscreen.js の checkGpu）。Offscreen Documentが無ければ作る（モデルは読み込まない）。 */
+export async function checkGpu() {
+  await ensureOffscreen();
+  return (await send({ type: MSG.MODEL_GPU_CHECK })) ?? { ok: false, error: '返事がありません' };
+}
+
 /** モデルを解放する。Offscreen Documentごと閉じるので、WASM・WebGPU のメモリーもすべて返る。 */
 export async function unload() {
   if (await chrome.offscreen.hasDocument()) await chrome.offscreen.closeDocument();

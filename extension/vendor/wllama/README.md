@@ -4,17 +4,17 @@
 
 ## 現在のファイルと差し替え状態
 
-現在の JS・WASM は、下表の9フォルダー14パッチを固定版へ重ねた通常版（artifactId `baseline-candidate-eeff57105463`、入力 hash `9a9a452971ef38389a296aa600359715d2f536a7ccb7745b866c558af4dcc869`）。
+現在の JS・WASM は、下表の10フォルダー16パッチを固定版へ重ねた通常版（artifactId `baseline-candidate-a5e38c85bf2b`、入力 hash `34c96d93a7acf66bed1fdbbbd947bc8993e660d86efc17bbdf640ccf94bdf9c3`）。
 
 | ファイル | SHA-256 |
 | --- | --- |
-| `index.js` | `fffd95c16ca191f31f4303664a05189c43d0cb20c52b67276c04e8857b138b64` |
-| `wasm/wllama.wasm` | `76b7a59d3b4577df9a336b33051aaa41d1e8541d4df7d77997efd1714b0cb03e` |
+| `index.js` | `27e54e423c920e8ad9feec1ace4833a4a49afabf741d88ce7727c1a9f892bee7` |
+| `wasm/wllama.wasm` | `8dcbdbd74983f3aba0541c7e8375a9f41b1d35ccbe2f6b25a397dd6f9af4c1c1` |
 
 作り直すときは、拡張のフォルダーの1つ上（リポジトリ直下）で次を実行し、出力された成果物の2ファイルを一緒に差し替える。
 
 ```powershell
-node tools/wllama/build.mjs --variant baseline --patches tools/wllama/patches/commands,tools/wllama/patches/sampling,tools/wllama/patches/matmul,tools/wllama/patches/result,tools/wllama/patches/prefill,tools/wllama/patches/matmul-h8,tools/wllama/patches/attn,tools/wllama/patches/prefill-m8,tools/wllama/patches/sampling-stable
+node tools/wllama/build.mjs --variant baseline --patches tools/wllama/patches/commands,tools/wllama/patches/sampling,tools/wllama/patches/matmul,tools/wllama/patches/result,tools/wllama/patches/prefill,tools/wllama/patches/matmul-h8,tools/wllama/patches/attn,tools/wllama/patches/prefill-m8,tools/wllama/patches/sampling-stable,tools/wllama/patches/adapter
 ```
 
 | 項目 | 値 |
@@ -22,8 +22,8 @@ node tools/wllama/build.mjs --variant baseline --patches tools/wllama/patches/co
 | 取得元 | npm の `@wllama/wllama` 3.13.0（2026-11-08公開）。<https://github.com/ngxson/wllama> |
 | 取得日 | 2026-11-09 |
 | tarball の integrity | `sha512-ZvoRdQAn+E+18EvQ9qS036gudiI9rbZRBJgG/qNICPPwrA0Y6SMMdbziz/j7K/0WxcbJlhaRraVIYsnEy732NA==`（npm の値と一致を確認） |
-| 現在の2ファイル | `esm/index.js` → `index.js`、`esm/wasm/wllama.wasm` → `wasm/wllama.wasm`（JSは配布物、WASMは上表の自前パッチ版） |
-| SHA-256 | `index.js` `fffd95c16ca191f31f4303664a05189c43d0cb20c52b67276c04e8857b138b64`、`wllama.wasm` `76b7a59d3b4577df9a336b33051aaa41d1e8541d4df7d77997efd1714b0cb03e` |
+| 現在の2ファイル | `esm/index.js` → `index.js`、`esm/wasm/wllama.wasm` → `wasm/wllama.wasm`（どちらも上表の自前パッチ版。adapter パッチが WebGPU の関数を新しく使い、`probeBackend()` を足すので、JS も配布物と変わる） |
+| SHA-256 | `index.js` `27e54e423c920e8ad9feec1ace4833a4a49afabf741d88ce7727c1a9f892bee7`、`wllama.wasm` `8dcbdbd74983f3aba0541c7e8375a9f41b1d35ccbe2f6b25a397dd6f9af4c1c1` |
 | ライセンス | MIT License（Copyright (c) Xuan Son Nguyen）。同梱の llama.cpp も MIT License |
 
 ## 自前ビルドの固定入力
@@ -52,6 +52,7 @@ node tools/wllama/build.mjs --variant baseline --patches tools/wllama/patches/co
 | attn | `0001-skip-masked-prefill-tiles.patch` | 原文読み込み時の attention で、全行が mask されたタイルを読み込み前に飛ばす |
 | prefill-m8 | `0001-widen-kquant-thread-tile.patch` | 原文読み込み時の Q4_K/Q6_K の行列積で、1スレッドの受け持ちを 4×8 から 8×8 へ広げる（共有メモリー16KB、GPU名では分けない） |
 | sampling-stable | `0001-keep-token-only-slot-samplers.patch` | 温度0の翻訳の sampler を全スロットへ最初に付けて保持し、バッチの開始・終了ごとの計算グラフの取り直し（reserve）をなくす（N1） |
+| adapter | `0001-select-adapter-retry-device-probe.patch`、`0002-probe-backend-without-model.patch` | GPU を3通りの `powerPreference` で求めて shader-f16 を持つものを使い、デバイスの取得を再試行し、検算が合わなければ GPU を使わない。結果を拡張機能へ1行で報告する（sakutto 0007 の移植）。モデルなしで推論エンジンを起動して報告を受け取る `probeBackend()` を足す |
 
 H6 の `samplers: ["temperature"]` は offscreen の要求設定として採用する。`attn`（H5）は修正・再計測後の採用版を含む。`cpu`・`cache`・計測用 `profile` もこの採用一覧には含めず、採否は各実験で確定する。
 

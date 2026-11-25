@@ -73,19 +73,29 @@
     <legend>このPCの性能に合わせる</legend>
     <small>この欄の設定はPCごとに保存し、ほかのPCへ同期しません（内蔵GPUのPCと単体GPUのPCで合う値が違うため）。
       変えると、読み込んでいるモデルを解放し、次に訳すときに新しい設定で読み込みます。</small>
+    <h3>使う GPU</h3>
     <div class="tune-box">
-      <span id="tunestate">「このPCに合わせる」を押すと、設定を変えながら同じ文章を訳して時間を比べ、いちばん速い設定を保存します（今のモデルで1〜4分。測っている間はPCを操作しないでください。0.8Bと2Bで合う値が違うので、モデルを替えたら合わせ直してください）。</span>
+      <span><span id="adapter">確かめています…</span><br><small id="gpunote"></small></span>
+      <span class="buttons"><button id="gpucheck">確かめ直す</button></span>
+    </div>
+    <small>単体GPU・外付けGPUで動かしたいとき：このブラウザーが使う GPU は、ブラウザーの外で決まり、拡張機能からは選べません。次のどちらかをしてブラウザーを再起動し、「確かめ直す」を押してください。</small>
+    <ol class="gpu-steps">
+      <li><small>Windows の設定（システム → ディスプレイ → グラフィックス）で、このブラウザーに「高パフォーマンス」か、使う GPU を選ぶ</small> <button id="opengraphics">設定を開く</button></li>
+      <li><small><code id="flagurl"></code> を Enabled にする</small> <button id="openflags">開く</button></li>
+    </ol>
+    <h3>動作モード</h3>
+    <label><input type="radio" name="device" value="auto"> 自動（GPU が使えれば GPU、使えない・計算が止まったときは CPU）</label>
+    <label><input type="radio" name="device" value="gpu"> GPU（WebGPU）</label>
+    <label><input type="radio" name="device" value="cpu"> CPU</label>
+    <h3>速さを測る</h3>
+    <div class="tune-box">
+      <span id="tunestate">「このPCに合わせる」を押すと、設定を変えながら同じ文章を訳して時間を比べ、いちばん速い設定を保存します（今のモデルで1〜4分。測っている間はPCを操作しないでください。0.8Bと2Bで合う値が違うので、モデルを替えたら合わせ直してください）。「今の設定で測る」は今の設定だけを測ります。</span>
       <span class="buttons"><button id="tune">このPCに合わせる</button><button id="tunestop" hidden>途中でやめる</button><button id="speed">今の設定で測る</button></span>
     </div>
     <table id="tunerows" hidden>
       <thead><tr><th>設定</th><th>試験用の文章24件を訳す時間（キャッシュなし）</th><th>最初の1件</th><th>生成の速さ</th><th></th></tr></thead>
       <tbody></tbody>
     </table>
-    <h3>動作モード</h3>
-    <label><input type="radio" name="device" value="auto"> 自動（GPU が使えれば GPU、読み込めなければ CPU）</label>
-    <label><input type="radio" name="device" value="gpu"> GPU（WebGPU）</label>
-    <label><input type="radio" name="device" value="cpu"> CPU</label>
-    <small>使う GPU：<span id="adapter">確認中…</span></small>
     <h3>細かい調整</h3>
     <label class="inline">同時に翻訳する数 <select name="parallel" id="parallel"></select></label>
     <br><small>ページの翻訳で、同時にモデルへ送る文章のまとめの数です。GPU の性能に余裕があるほど、多くすると全体が速くなります。多すぎると1件ずつが遅くなり、画面内が出るまでが延びます。</small>

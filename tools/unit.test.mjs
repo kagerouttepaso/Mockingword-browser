@@ -13,6 +13,7 @@ import { createPdfBatchRequests } from '../extension/ui/pdf-batches.js';
 import { createPages } from '../extension/ui/pdf-pages.js';
 import { createStore } from '../extension/ui/pdf-state.js';
 import { analyzeUx, dispatchDiagnostics, median } from './profile/replay-ux-analysis.mjs';
+import { adapterLabel, chosenAdapter, distinctAdapters, isEngineCrash, parseGpuReport } from '../extension/offscreen/gpu.js';
 
 const pdfParas = (...texts) => texts.map((text) => ({ text, plain: text, size: 12, lines: 1 }));
 
@@ -385,4 +386,22 @@ test('normalizePageFonts・pickFontWeights：不正な値を既定へ戻し、�
     contentType: 'font/ttf',
   });
   assert.equal(fontFileSpec('noto-sans-jp', 400).contentType, 'font/woff2');
+});
+
+test('推論エンジンの GPU の報告を読み、使っている GPU とブラウザーが見せる GPU の数を出す。読めない行・計算の停止も見分ける', () => {
+  // ggml-webgpu のパッチ（tools/wllama/patches/adapter）が出す形。wllama は行頭に印を付けずに渡すことがある。
+  const line = 'ggml_webgpu: report {"ready":true,"candidates":['
+    + '{"preference":"high-performance","vendor":"intel","architecture":"xe-lpg","device":"","description":"Intel(R) Arc(TM) \\"G\\"","vendorId":32902,"deviceId":32085,"shaderF16":true,"subgroups":true,"subgroupMinSize":8,"subgroupMaxSize":32},'
+    + '{"preference":"default","vendor":"intel","architecture":"xe-lpg","device":"","description":"Intel(R) Arc(TM) \\"G\\"","vendorId":32902,"deviceId":32085,"shaderF16":true,"subgroups":true,"subgroupMinSize":8,"subgroupMaxSize":32},'
+    + '{"preference":"low-power","error":"none"}],'
+    + '"chosen":"high-performance","device":"adapter-max-limits optional-features","probe":{"add":136,"subgroups":true,"subgroupSize":16,"note":null},"error":null}';
+  const report = parseGpuReport(line);
+  assert.equal(report.ready, true);
+  assert.equal(adapterLabel(chosenAdapter(report)), 'Intel(R) Arc(TM) "G" / intel / xe-lpg');
+  assert.equal(distinctAdapters(report), 1); // 求め方を変えても同じ GPU（ブラウザーが1つしか見せていない）
+  assert.equal(parseGpuReport('ggml_webgpu: adapter_info: vendor_id: 1'), null);
+  assert.equal(parseGpuReport('ggml_webgpu: report {broken'), null);
+  assert.equal(isEngineCrash(new Error('(ABORT) ')), true);
+  assert.equal(isEngineCrash(new Error('wllama has crashed, please reload the module')), true);
+  assert.equal(isEngineCrash(new Error('取り消し済み')), false);
 });

@@ -18,7 +18,7 @@ export const MSG = {
   SELECTION_ICON: 'selection-icon', // { text }
 
   // 画面（ui/）→ Service Worker
-  STATUS: 'status', // → { loaded, loading, device, threads, adapter, parallel, ubatch, model, idleMinutes, lastUse }
+  STATUS: 'status', // → { loaded, loading, device, threads, adapter, gpu, fallback, parallel, ubatch, model, idleMinutes, lastUse }
   UNLOAD: 'unload',
   PAGE_ACTION: 'page-action', // { tabId, action: 'toggle'|'trans'|'orig'|'both'|'stop' }
   SWITCH_MODEL: 'switch-model', // { model, tabId }
@@ -32,9 +32,10 @@ export const MSG = {
   FONT_CACHE_CLEAR: 'font-cache-clear',
   LOGS_GET: 'logs-get',
   LOGS_CLEAR: 'logs-clear',
-  SPEED_TEST: 'speed-test', // → { ok, row }：今の設定で速さを測る
+  SPEED_TEST: 'speed-test', // → { ok, result }：今の設定で速さを測る（結果は TUNE と同じ形）
   TUNE: 'tune', // → { ok, result }：このPCに合わせる（設定を変えて測り、いちばん速い設定を保存する）
   TUNE_STOP: 'tune-stop',
+  GPU_CHECK: 'gpu-check', // → { ok, ready, adapter, distinct, error, crashed, at, source }：使う GPU を確かめる（モデルを読み込み済みならその報告、無ければモデルなしで推論エンジンを起動して確かめる）
 
   // Offscreen Document（offscreen/）→ Service Worker
   MODEL_PROGRESS: 'local-progress', // { model, loaded, total }
@@ -61,6 +62,7 @@ export const MSG = {
   // Service Worker → Offscreen Document（{ target: 'offscreen' } を付ける）
   COMPLETE: 'complete', // { requestId, model, device, threads, parallel, ubatch, prompt, maxTokens, lines, stop, debugLog } → { ok, text, cut, tokens, genMs, loadMs } | { ok:false, cancelled }
   MODEL_STATUS: 'status',
+  MODEL_GPU_CHECK: 'gpu-check',
   MODEL_CANCEL: 'cancel', // { requestId }
 };
 

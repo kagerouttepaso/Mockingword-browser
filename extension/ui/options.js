@@ -2,6 +2,7 @@
 // Service Worker（background/config.js）が翻訳のたびに読む。
 import { DEFAULTS, LOCAL_DEFAULTS, PARALLEL_CHOICES, UBATCH_CHOICES, fillLanguages, describeStatus, normalizeLocal } from '../shared/settings.js';
 import { MSG } from '../shared/messages.js';
+import { describeGpu, describeGpuCheck } from '../shared/gpu.js';
 import { initFontOptions } from './options-fonts.js';
 
 const cores = navigator.hardwareConcurrency || 1;
@@ -49,20 +50,23 @@ const speedBtn = document.getElementById('speed');
 const tuneState = document.getElementById('tunestate');
 const table = document.getElementById('tunerows');
 
-/** 測った結果を表にする。best の行を太字にする。 */
-function showRows(rows, best) {
+/**
+ * 測った結果を表にする。「このPCに合わせる」は選んだ設定の行、「今の設定で測る」はその1行に印を付けて太字にする。
+ * mark が無ければ（測っている途中）印を付けない。
+ */
+function showRows(rows, best, mark) {
   table.hidden = !rows?.length;
   const body = table.querySelector('tbody');
   body.replaceChildren();
   for (const r of rows ?? []) {
     const tr = body.insertRow();
-    const isBest = best && !r.error && r.parallel === best.parallel && r.ubatch === best.ubatch && (best.threads == null || r.threads === best.threads);
+    const isBest = mark && !r.error && (!best || (r.parallel === best.parallel && r.ubatch === best.ubatch && (best.threads == null || r.threads === best.threads)));
     if (isBest) tr.className = 'best';
     tr.insertCell().textContent = r.label;
     tr.insertCell().textContent = r.error ? '読み込めず' : `${(r.ms / 1000).toFixed(2)}秒${r.spread != null ? `（±${Math.round((r.spread * 100) / 2)}%）` : ''}`;
     tr.insertCell().textContent = r.error || r.firstMs == null ? '' : `${(r.firstMs / 1000).toFixed(2)}秒`;
     tr.insertCell().textContent = r.error ? r.error.slice(0, 60) : `${r.tps} トークン/秒`;
-    tr.insertCell().textContent = isBest ? '← 選んだ設定' : '';
+    tr.insertCell().textContent = isBest ? mark : '';
   }
 }
 
@@ -101,19 +105,24 @@ speedBtn.onclick = async () => {
     tuneState.textContent = `測れませんでした：${r?.error ?? '返事がありません'}`;
     return;
   }
-  const row = r.row;
-  tuneState.textContent = `今の設定（${row.device === 'cpu' ? 'CPU' : 'GPU'}・${row.label}）：試験用の文章24件（キャッシュなし）を ${(row.ms / 1000).toFixed(2)}秒（3回の中央値）、最初の1件は ${(row.firstMs / 1000).toFixed(2)}秒、${row.tps} トークン/秒（モデルの読み込みと、最初の準備の1回は含めない）`;
+  showTuneResult(r.result);
   render();
 };
 
-/** 前回の「このPCに合わせる」の結果を出す。 */
+/**
+ * 最後に測った結果を出す。「このPCに合わせる」（kind: tune）と「今の設定で測る」（kind: speed）は同じ形の結果で、同じ書き方で出す。
+ * 時間は、モデルの読み込みと最初の準備の1回を含めない、3回の中央値（background/tune.js）。
+ */
 function showTuneResult(t) {
   if (!t) return;
   const when = new Date(t.at).toLocaleString('ja-JP');
+  const where = t.device === 'cpu' ? 'CPU' : `GPU（${t.adapter ?? '名前不明'}）`;
+  const speed = t.kind === 'speed';
   const c = t.chosen;
-  const how = t.device === 'cpu' ? `CPU ${c.threads}スレッド・同時${c.parallel}件` : `同時${c.parallel}件・ubatch ${c.ubatch}`;
-  tuneState.textContent = `${when} に ${t.model}・${t.device === 'cpu' ? 'CPU' : `GPU（${t.adapter ?? '名前不明'}）`} で合わせ、${how} を選びました${t.stopped ? '（途中でやめたので、そこまでの結果から選択）' : ''}。`;
-  showRows(t.rows, c);
+  const chose = speed || !c ? '' : `、${t.device === 'cpu' ? `CPU ${c.threads}スレッド・同時${c.parallel}件` : `同時${c.parallel}件・ubatch ${c.ubatch}`} を選びました`;
+  const what = speed ? '今の設定を測りました' : `${t.rows.length}通りの設定を測り${chose}`;
+  tuneState.textContent = `${when}・${t.model}・${where} で${what}${t.stopped ? '（途中でやめたので、そこまでの結果から選択）' : ''}。`;
+  showRows(t.rows, speed ? null : c, speed ? '← 今の設定' : '← 選んだ設定');
 }
 showTuneResult((await chrome.storage.local.get('tuneResult')).tuneResult);
 
@@ -124,27 +133,50 @@ unload.onclick = async () => {
   render();
 };
 
-/** モデルを読み込む前に出す、この画面から見える WebGPU の GPU の名前（Offscreen Documentも同じものを使う）。 */
-async function gpuName() {
-  try {
-    const a = await navigator.gpu?.requestAdapter();
-    if (!a) return 'WebGPU を使えません（CPU で動きます）';
-    const i = a.info ?? {};
-    return ([i.description, i.vendor, i.architecture].filter(Boolean).join(' / ') || 'WebGPU') + '（訳すときに確かめます）';
-  } catch {
-    return 'WebGPU を使えません（CPU で動きます）';
-  }
+// ---- 使う GPU ----
+// GPU は推論エンジンが選んで報告する。この画面は GPU を求めず、報告（MSG.GPU_CHECK・状態の gpu）を shared/gpu.js の文で出すだけ。
+const gpuName = document.getElementById('adapter');
+const gpuNote = document.getElementById('gpunote');
+const gpuCheckBtn = document.getElementById('gpucheck');
+
+function showGpu(g) {
+  gpuName.textContent = describeGpu(g);
+  const mode = document.querySelector('input[name="device"]:checked')?.value;
+  gpuNote.textContent = [describeGpuCheck(g), mode === 'cpu' ? '動作モードが CPU なので、翻訳には使いません' : ''].filter(Boolean).join('。');
 }
+
+/** 使う GPU を確かめる。モデルを読み込み済みならその報告、無ければモデルなしで推論エンジンを起動して確かめる（数秒）。 */
+async function checkGpu() {
+  gpuCheckBtn.disabled = true;
+  gpuName.textContent = '確かめています…（モデルは読み込みません。数秒かかります）';
+  gpuNote.textContent = '';
+  const g = await chrome.runtime.sendMessage({ type: MSG.GPU_CHECK }).catch((e) => ({ ok: false, error: e.message }));
+  gpuCheckBtn.disabled = false;
+  if (!g?.ok && !g?.at) {
+    gpuName.textContent = `確かめられませんでした：${g?.error ?? '返事がありません'}`;
+    return;
+  }
+  showGpu(g);
+}
+gpuCheckBtn.onclick = checkGpu;
+
+// ブラウザーが使う GPU を変える場所を開く。どちらも拡張機能からは変えられないので、開いて利用者に選んでもらう。
+const flagsUrl = `${navigator.userAgentData?.brands?.some((b) => b.brand === 'Microsoft Edge') ? 'edge' : navigator.brave ? 'brave' : 'chrome'}://flags/#force-high-performance-gpu`;
+document.getElementById('flagurl').textContent = flagsUrl;
+document.getElementById('openflags').onclick = () => chrome.tabs.create({ url: flagsUrl });
+document.getElementById('opengraphics').onclick = () => chrome.tabs.create({ url: 'ms-settings:display-advancedgraphics' });
 
 async function render() {
   const s = await chrome.runtime.sendMessage({ type: MSG.STATUS });
   document.querySelector('#status span').textContent = describeStatus(s);
   unload.disabled = !s?.loaded && !s?.loading;
-  if (s?.loaded) document.getElementById('adapter').textContent = s.device === 'gpu' ? s.adapter ?? '名前を取れませんでした' : '使っていません（CPU で動いています）';
-  else if (document.getElementById('adapter').textContent === '確認中…') document.getElementById('adapter').textContent = await gpuName();
+  // 読み込み済みなら、そのモデルが使っている GPU の報告がいちばん確かなので、欄をそれで出し直す（計算が止まったときも分かる）。
+  if (s?.loaded && s.gpu) showGpu(s.gpu);
+
 }
 render();
 setInterval(render, 30_000);
+checkGpu(); // 開いたときに確かめる（インストール直後・ブラウザーの設定を変えて再起動した後も、開けば分かる）
 
 // ---- 訳文のキャッシュの件数と大きさ ----
 const mb = (bytes) => (bytes >= 1e9 ? `${(bytes / 1e9).toFixed(2)} GB` : `${(bytes / 1e6).toFixed(1)} MB`);

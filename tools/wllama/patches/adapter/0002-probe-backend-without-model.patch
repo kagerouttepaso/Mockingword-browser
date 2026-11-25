@@ -1,0 +1,41 @@
+diff --git a/src/wllama.ts b/src/wllama.ts
+--- a/src/wllama.ts
++++ b/src/wllama.ts
+@@ -1192,6 +1192,37 @@ export class Wllama {
+     this.proxy = null as any;
+   }
+ 
++  /**
++   * Mockingword：モデルを読み込まずに推論エンジンを起動し、すぐ終了する。
++   * 起動の時点で ggml がバックエンドを登録するので、GPU の選択・検算の報告（ggml_webgpu: report）がロガーへ届く。
++   * モデルの取得も読み込みもしないので数秒で終わる。読み込み時と同じ起動の処理で確かめる（GPU を別の方法で求めない）。
++   */
++  async probeBackend(): Promise<void> {
++    if (!this.pathConfig['default']) {
++      throw new WllamaError(
++        '"default" is missing from pathConfig',
++        'load_error'
++      );
++    }
++    const tmpProxy = new ProxyToWorker(
++      this.getWorkerResources(),
++      0, // モデルを読まないので単一スレッドで足りる
++      this.config.suppressNativeLog ?? false,
++      this.logger()
++    );
++    try {
++      await tmpProxy.moduleInit([]);
++      const startResult: any = await tmpProxy.wllamaStart();
++      if (!startResult.success) {
++        throw new WllamaError(
++          `Error while calling start function, result = ${startResult}`
++        );
++      }
++    } finally {
++      await tmpProxy.wllamaExit();
++    }
++  }
++
+   /**
+    * [FOR DEBUGGING ONLY] Run ggml backend ops tests without loading any model.
+    *

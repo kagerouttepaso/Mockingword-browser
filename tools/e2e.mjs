@@ -309,8 +309,12 @@ try {
 
   // ---- CPU ----
   // ---- 今の設定で測る（PCに合わせる調整の1回分） ----
+  // 使う GPU の確認：推論エンジンの報告（ggml_webgpu: report）が届き、GPU の名前か使えない理由が返る。報告の形が拡張機能とずれると黙って何も出なくなるため。
+  const gc = await message(b, { type: 'gpu-check' });
+  t.check('使う GPU を確かめる', gc?.ok && gc.error !== 'no report' && (gc.ready ? !!gc.adapter : !!gc.error), JSON.stringify({ ready: gc?.ready, adapter: gc?.adapter, distinct: gc?.distinct, error: gc?.error, source: gc?.source }));
   const sp = await message(b, { type: 'speed-test' });
-  t.check('今の設定で速さを測る', sp?.ok && sp.row.ms > 0 && sp.row.tps > 0, sp?.ok ? `${sp.row.label}、${(sp.row.ms / 1000).toFixed(1)}秒、${sp.row.tps} トークン/秒、${sp.row.adapter ?? sp.row.device}` : JSON.stringify(sp));
+  const spRow = sp?.result?.rows?.[0];
+  t.check('今の設定で速さを測る', sp?.ok && sp.result.kind === 'speed' && spRow?.ms > 0 && spRow?.tps > 0, sp?.ok ? `${spRow.label}、${(spRow.ms / 1000).toFixed(1)}秒、${spRow.tps} トークン/秒、${sp.result.adapter ?? sp.result.device}` : JSON.stringify(sp));
 
   await b.eval(b.ext, `chrome.storage.local.set({ device: 'cpu', threads: 4 })`);
   await sleep(1000);

@@ -1,11 +1,12 @@
 // 拡張機能のOffscreen Document。ブラウザーの中で PLaMo を動かす（wllama＝llama.cpp の WASM 版）。
 // Service Worker（core/engine.js）から { target: 'offscreen' } のリクエストを受けて訳す。モデルは一度読み込んだら、このページが閉じるまで保持する。
 // メモリーを空けるときは、Service Workerがこのページごと閉じる（未使用が続いたとき・「モデルを解放」）。設計は docs/03_翻訳コア.md。
-import { Wllama } from '../vendor/wllama/index.js';
+import { LogLevel, Wllama } from '../vendor/wllama/index.js';
 import { runaway } from '../shared/text.js';
 import { previewLine } from '../shared/markup.js';
 import { LOG_SOURCE, MSG, OFFSCREEN } from '../shared/messages.js';
 import { LOCAL_DEFAULTS } from '../shared/settings.js';
+import { adapterLabel, chosenAdapter, gpuView, isEngineCrash, parseGpuReport, reportSummary } from './gpu.js';
 
 /**
  * 取得元は版（コミット）に固定する。配布元はチャットテンプレートだけを何度も更新しており、main から取ると中身が変わる。
@@ -22,27 +23,46 @@ const MODELS = {
   },
 };
 
+/** 推論エンジン（wllama の WASM）。 */
+const WASM_URL = chrome.runtime.getURL('vendor/wllama/wasm/wllama.wasm');
+
 /** 1スロット（同時に訳す1本）あたりの文脈の長さ（トークン）。 */
 const CTX_PER_SLOT = 4096;
 
 // ---------------- モデルの読み込み ----------------
 
-/** 今読み込んでいるモデル。{ key, name, device, threads, parallel, ubatch, adapter, wllama, ready: Promise } */
+/** 今読み込んでいるモデル。{ key, name, device, threads, parallel, ubatch, adapter, gpu, gpuAt, fallback, native, wllama, ready: Promise }。gpu は GPU で読み込んだときの推論エンジンの報告 */
 let current = null;
 
 /**
- * WebGPU のアダプター（GPU）の名前。取れなければ null（GPU を使えない）。
- * 単体GPUと内蔵GPUの両方があるPCで、どちらが使われているかを設定画面で確かめるために出す。
+ * GPU の計算が止まった記録。{ reason, error }。自動のモードは、このOffscreen Documentが閉じるまで GPU を使わない
+ * （同じ GPU で読み込み直しても同じ所で止まるため）。閉じると（未使用が続いたとき・「モデルを解放」）消え、次は GPU を試す。
  */
-async function gpuAdapter() {
-  try {
-    const adapter = await navigator.gpu?.requestAdapter();
-    if (!adapter) return null;
-    const i = adapter.info ?? {};
-    return [i.description, i.vendor, i.architecture].filter(Boolean).join(' / ') || 'WebGPU';
-  } catch {
-    return null;
-  }
+let gpuFailure = null;
+
+/** 推論エンジンのログのうち、調査用のログに添える警告・エラーの行数。 */
+const NATIVE_LINES = 20;
+
+/**
+ * 推論エンジンのログの受け取り口。GPU の報告（./gpu.js）と、警告・エラーの最後の数行だけを残す。
+ * GPU の選択・検算の結果も、計算が止まったときの理由も、ここで受け取ったものしか使わない。
+ */
+function nativeLog() {
+  const native = { report: null, lines: [], crashed: false };
+  const keep = (level) => (...args) => {
+    const line = args.map(String).join(' ');
+    const report = parseGpuReport(line);
+    if (report) {
+      native.report = report;
+      return;
+    }
+    if (level === 'debug') return;
+    if (line.includes('Stack trace (abort)')) native.crashed = true; // wllama が WASM の停止を知らせる行
+    native.lines.push(line.slice(0, 300));
+    if (native.lines.length > NATIVE_LINES) native.lines.shift();
+  };
+  native.logger = { debug: keep('debug'), log: keep('log'), info: keep('log'), warn: keep('warn'), error: keep('error') };
+  return native;
 }
 
 /** CPU のスレッド数。0（自動）なら論理コア数の半分（wllama の既定と同じ。残りを画面の処理に空ける）。 */
@@ -56,7 +76,8 @@ function threadsFor(requested) {
  * ubatch：原文の読み込みで GPU へ一度に渡すトークン数。n_batch はそれ以上にする必要がある。
  */
 async function load(name, device, threads, slots, ubatch) {
-  const wllama = new Wllama({ default: chrome.runtime.getURL('vendor/wllama/wasm/wllama.wasm') }, { suppressNativeLog: true });
+  const native = nativeLog();
+  const wllama = new Wllama({ default: WASM_URL }, { logger: native.logger });
   let lastReport = 0;
   try {
     await loadInto(wllama, name, device, threads, slots, ubatch, (now) => {
@@ -67,14 +88,17 @@ async function load(name, device, threads, slots, ubatch) {
   } catch (e) {
     // 読み込みに失敗した分の GPU メモリーを空けてから、呼び出し元が同時実行数を下げて試し直す。
     await wllama.exit().catch(() => {});
+    e.native = native;
     throw e;
   }
-  return wllama;
+  return { wllama, native };
 }
 
 async function loadInto(wllama, name, device, threads, slots, ubatch, due) {
   await wllama.loadModelFromUrl(MODELS[name].url, {
     useCache: true,
+    // GPU の報告は推論エンジンの起動時に出るので、この値に関わらず届く。読み込み後は警告・エラーだけを受け取る。
+    log_level: LogLevel.WARN,
     n_gpu_layers: device === 'gpu' ? 99 : 0, // 0 にすると WebGPU を使わず CPU（WASM）で動く
     n_threads: threads,
     n_ctx: CTX_PER_SLOT * slots,
@@ -113,20 +137,21 @@ async function acquire(entry) {
 }
 
 /** 指定のモデル・動作モードで読み込んだものを返す。違うものを読み込んでいたら、空けてから読み込み直す。 */
-async function ensure({ model, device = LOCAL_DEFAULTS.device, threads = LOCAL_DEFAULTS.threads, parallel = LOCAL_DEFAULTS.parallel, ubatch = LOCAL_DEFAULTS.ubatch }) {
+async function ensure(message) {
+  const { model, device = LOCAL_DEFAULTS.device, threads = LOCAL_DEFAULTS.threads, parallel = LOCAL_DEFAULTS.parallel, ubatch = LOCAL_DEFAULTS.ubatch } = message;
   const key = `${model}|${device}|${threads}|${parallel}|${ubatch}`;
   if (current?.key === key) {
     const same = current;
     return same.ready.then(() => same);
   }
   const previous = current;
-  const entry = { key, name: model, device: null, threads: null, parallel, ubatch, adapter: null, wllama: null, ready: null };
+  const entry = { key, name: model, device: null, threads: null, parallel, ubatch, adapter: null, gpu: null, gpuAt: null, fallback: null, native: null, wllama: null, ready: null };
   current = entry;
   entry.ready = (async () => {
     // 別のモデル・設定に切り替えるときは、メモリー（2Bで約2GB）を空けてから読み込む。
     if (previous) await previous.ready.catch(() => {}).then(() => previous.wllama?.exit()).catch(() => {});
-    const adapter = device === 'cpu' ? null : await gpuAdapter();
-    const useGpu = device === 'gpu' || (device === 'auto' && !!adapter);
+    // どの GPU を使うか・使えるかは推論エンジンが決めて報告する（./gpu.js）。ここでは GPU を求めない。
+    const useGpu = device === 'gpu' || (device === 'auto' && !gpuFailure);
     entry.threads = threadsFor(threads);
     let error = null;
     if (useGpu) {
@@ -134,13 +159,35 @@ async function ensure({ model, device = LOCAL_DEFAULTS.device, threads = LOCAL_D
       // GPU の4本・1本でも CPU より約2〜7倍速い（docs/03「動作モード」）。sakutto の段階的な降格と同じ考え方（docs/09 S4）。
       for (const n of degradeSteps(parallel)) {
         try {
-          entry.wllama = await load(model, 'gpu', entry.threads, n + 1, ubatch);
-          entry.device = 'gpu';
-          entry.adapter = adapter;
+          const loaded = await load(model, 'gpu', entry.threads, n + 1, ubatch);
+          const report = loaded.native.report;
+          trace(message, 'GPU', { ...reportSummary(report), parallel: n, native: loaded.native.lines.slice(-8) });
+          entry.wllama = loaded.wllama;
+          entry.native = loaded.native;
+          entry.gpu = report;
+          entry.gpuAt = Date.now();
           entry.slots = n + 1;
+          if (report && !report.ready) {
+            // 推論エンジンが GPU を使えないと判断した（検算の不一致・shader-f16 なし・デバイスを取れない）。
+            // モデルは CPU に載っており、同時実行数も CPU と同じなので、自動ならこのまま CPU として使う。
+            if (device !== 'auto') {
+              await loaded.wllama.exit().catch(() => {});
+              entry.wllama = null;
+              error = new Error(`GPU を使えません（${report.error ?? '理由不明'}）。動作モードを自動か CPU にしてください。`);
+              break;
+            }
+            entry.device = 'cpu';
+            entry.fallback = `GPU を使えないため（${report.error ?? '理由不明'}）`;
+            break;
+          }
+          entry.device = 'gpu';
+          entry.adapter = adapterLabel(chosenAdapter(report));
           if (n !== parallel) console.warn(`[Mockingword] GPUで同時${parallel}本を読み込めないため、${n}本で読み込みました`, error);
           break;
         } catch (e) {
+          trace(message, 'GPU読み込み失敗', { ...reportSummary(e.native?.report), parallel: n, error: e?.message ?? String(e), native: e.native?.lines.slice(-8) ?? [] });
+          entry.gpu = e.native?.report ?? entry.gpu;
+          entry.gpuAt = Date.now();
           error = e;
         }
       }
@@ -149,9 +196,12 @@ async function ensure({ model, device = LOCAL_DEFAULTS.device, threads = LOCAL_D
       // GPU を明示した設定なら CPU へは落とさない。自動なら CPU で読み込み直す（WebGPU の不具合に備える）。
       if (useGpu && device !== 'auto') throw error;
       if (useGpu) console.warn('[Mockingword] GPUで読み込めないためCPUで読み込みます', error);
-      entry.wllama = await load(model, 'cpu', entry.threads, parallel + 1, ubatch);
+      const loaded = await load(model, 'cpu', entry.threads, parallel + 1, ubatch);
+      entry.wllama = loaded.wllama;
+      entry.native = loaded.native;
       entry.device = 'cpu';
       entry.slots = parallel + 1;
+      entry.fallback = device !== 'auto' ? null : gpuFailure?.reason ?? (useGpu ? 'GPU で読み込めないため' : null);
     }
   })();
   entry.ready.catch(() => {
@@ -173,9 +223,33 @@ async function status() {
     device: current.device,
     threads: current.device === 'cpu' ? (current.wllama.isMultithread() ? current.threads : 1) : null,
     adapter: current.adapter,
+    gpu: current.gpu ? { ...gpuView(current.gpu), at: current.gpuAt, source: 'loaded', crashed: gpuFailure?.reason ?? null } : null,
+    fallback: current.fallback, // 自動のモードで CPU になった理由（GPU を使えない・計算が止まった）。無ければ null
     parallel: current.slots - 1, // GPU で同時実行数を下げて読み込んだときは、実際に読み込めた同時実行数
     ubatch: current.ubatch,
   };
+}
+
+/**
+ * 使う GPU を確かめる（設定画面を開いたとき・「確かめ直す」）。
+ * モデルを読み込み済みなら、読み込んだときの報告を返す（そのモデルが実際に使っている GPU）。
+ * 読み込んでいなければ、モデルなしで推論エンジンを起動して報告を受け取る（wllama の probeBackend。数秒で、何も取得しない）。
+ * どちらも推論エンジンの同じ起動の処理の報告で、拡張機能は GPU を自分で求めない。
+ */
+async function checkGpu() {
+  const entry = current;
+  if (entry) await entry.ready.catch(() => {});
+  if (current === entry && entry?.gpu) {
+    return { ok: true, ...gpuView(entry.gpu), at: entry.gpuAt, source: 'loaded', crashed: gpuFailure?.reason ?? null, native: entry.native?.lines.slice(-8) ?? [] };
+  }
+  const native = nativeLog();
+  const wllama = new Wllama({ default: WASM_URL }, { logger: native.logger });
+  try {
+    await wllama.probeBackend();
+  } catch (e) {
+    return { ok: false, error: e?.message ?? String(e), ...gpuView(native.report), at: Date.now(), source: 'probe', native: native.lines.slice(-8) };
+  }
+  return { ok: true, ...gpuView(native.report), at: Date.now(), source: 'probe', crashed: gpuFailure?.reason ?? null, report: reportSummary(native.report), native: native.lines.slice(-8) };
 }
 
 // ---------------- 生成 ----------------
@@ -199,10 +273,31 @@ async function complete(message) {
   running.get(key).add(controller);
   try {
     return await generate(message, controller);
+  } catch (e) {
+    // GPU の計算が止まったら、自動のモードでは CPU で読み込み直して1回だけ訳し直す（ensure が gpuFailure を見て CPU を選ぶ）。
+    if (e?.gpuCrash && (message.device ?? LOCAL_DEFAULTS.device) === 'auto' && !controller.signal.aborted) return await generate(message, controller);
+    throw e;
   } finally {
     running.get(key)?.delete(controller);
     if (running.get(key)?.size === 0) running.delete(key);
   }
+}
+
+/**
+ * GPU で計算中に推論エンジンが止まったとき（WASM ごと止まり、そのモデルは使えない）。原因を調査用のログに残し、
+ * 読み込み直せるように今のモデルを外す。返すエラーは gpuCrash の印を持ち、complete が自動のモードなら CPU で訳し直す。
+ */
+function gpuCrashed(entry, error, message) {
+  if (!gpuFailure) {
+    gpuFailure = { reason: `GPU（${entry.adapter ?? '名前不明'}）の計算が止まったため`, error: error?.message ?? String(error) };
+    trace(message, 'GPU失敗', { adapter: entry.adapter, error: gpuFailure.error, native: entry.native?.lines.slice(-8) ?? [] });
+    console.warn('[Mockingword] GPUの計算が止まりました', gpuFailure.error, entry.native?.lines ?? []);
+  }
+  if (current === entry) current = null;
+  if (!entry.exiting) entry.exiting = entry.wllama?.exit().catch(() => {});
+  const e = new Error(`GPU の計算が止まりました（${entry.adapter ?? '名前不明'}）。動作モードを自動か CPU にしてください。`);
+  e.gpuCrash = true;
+  return e;
 }
 
 async function generate(message, controller) {
@@ -264,7 +359,10 @@ async function generate(message, controller) {
       },
     });
   } catch (e) {
-    if (!keep && !controller.signal.aborted) throw e;
+    if (!keep && !controller.signal.aborted) {
+      if (entry.device === 'gpu' && (entry.native?.crashed || isEngineCrash(e))) throw gpuCrashed(entry, e, message);
+      throw e;
+    }
   } finally {
     release();
   }
@@ -305,6 +403,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         return complete(message);
       case MSG.MODEL_STATUS:
         return status();
+      case MSG.MODEL_GPU_CHECK:
+        return checkGpu();
       case MSG.MODEL_CANCEL:
         for (const c of running.get(message.requestId) ?? []) c.abort();
         return { ok: true };

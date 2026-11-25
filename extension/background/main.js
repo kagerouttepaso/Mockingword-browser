@@ -2,7 +2,7 @@
 // 部品の全体像とメッセージの流れは docs/02_アーキテクチャ.md。
 
 import { LOG_SOURCE, LOG_TAG, MSG, OFFSCREEN, PDF_BATCH_PORT } from '../shared/messages.js';
-import { CancelledError, cancel, forget, previewRows, status, streamPartial, unload } from '../core/engine.js';
+import { CancelledError, cancel, checkGpu, forget, previewRows, status, streamPartial, unload } from '../core/engine.js';
 import { lookupCached, translateBatch, translateLines, translateText } from '../core/translator.js';
 import { clear as clearCache, stats as cacheStats } from '../core/cache.js';
 import { clearFontCache, fontCacheStats, getFontCatalog, loadPageFont } from '../core/fonts.js';
@@ -136,6 +136,13 @@ const handlers = {
   },
   async [MSG.STATUS](_message, _sender, options) {
     return { ok: true, ...(await status()), model: options.model, idleMinutes: options.idleMinutes, lastUse: await lastUse() };
+  },
+  async [MSG.GPU_CHECK]() {
+    // 速さの調整の途中は、推論エンジンをもう1つ起動して測定に混ざらないよう、確かめない。
+    if (tuning()) return { ok: false, error: '速さの調整の途中です。終わってから確かめてください。' };
+    const result = await checkGpu();
+    addLog(LOG_SOURCE.background, 'GPUの確認', result);
+    return result;
   },
   async [MSG.UNLOAD]() {
     if (tuning()) return { ok: false, error: '速さの調整の途中です。' };

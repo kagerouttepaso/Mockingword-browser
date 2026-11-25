@@ -111,8 +111,11 @@ export async function speedTest(options) {
     progress({ text: '今の設定で測っています…（モデルの読み込みを含め数十秒）' });
     const r = await measure(options);
     const row = { ...r, parallel: options.parallel, ubatch: options.ubatch, label: label({ ...options, threads: r.threads }, r.device) };
-    addLog(LOG_SOURCE.background, '速さの測定', row);
-    return { ok: true, row };
+    // 「このPCに合わせる」と同じ形の結果にし、設定画面は同じ表示で出す（違うのは行の数と、選んだ設定が無いことだけ）。
+    const result = { at: Date.now(), kind: 'speed', model: options.model, device: r.device, adapter: r.adapter, rows: [row], chosen: null, stopped: false };
+    await chrome.storage.local.set({ tuneResult: result });
+    addLog(LOG_SOURCE.background, '速さの測定', result);
+    return { ok: true, result };
   } finally {
     running = null;
   }
@@ -151,7 +154,7 @@ export async function autoTune(options) {
     const base0 = ok.find((r) => r.parallel === LOCAL_DEFAULTS.parallel && (device !== 'cpu' || r.threads === b.threads));
     if (base0 && b.ms > base0.ms * (1 - Math.max(0.05, base0.spread ?? 0))) b = base0;
     const chosen = { parallel: b.parallel, ubatch: b.ubatch, ...(device === 'cpu' ? { threads: b.threads } : {}) };
-    const result = { at: Date.now(), model: options.model, device, adapter: rows.find((r) => r.adapter)?.adapter ?? null, rows, chosen, stopped: running.stop };
+    const result = { at: Date.now(), kind: 'tune', model: options.model, device, adapter: rows.find((r) => r.adapter)?.adapter ?? null, rows, chosen, stopped: running.stop };
     await chrome.storage.local.set({ ...chosen, tuneResult: result });
     addLog(LOG_SOURCE.background, 'PCに合わせる調整', result);
     return { ok: true, result };

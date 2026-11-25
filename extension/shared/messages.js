@@ -4,13 +4,13 @@
 
 export const MSG = {
   // ページ（page/）→ Service Worker
-  TRANSLATE_BATCH: 'translate-batch', // { texts, id } → { ok, results, stats: { requests, fallback, tokens, loadMs }, model } | { ok:false, cancelled }
-  CACHE_LOOKUP: 'cache-lookup', // { texts } → { results: (訳|null)[], model }
+  TRANSLATE_BATCH: 'translate-batch', // { texts, id, target? }（target：訳文の言語。無ければ設定の値） → { ok, results, stats: { requests, fallback, tokens, loadMs }, model } | { ok:false, cancelled }
+  CACHE_LOOKUP: 'cache-lookup', // { texts, target? } → { results: (訳|null)[], model }
   CANCEL: 'cancel', // { id }：古くなったバッチを取り消す
   PAGE_STATE: 'page-state', // { mode, host }：同じサイト内の自動翻訳のために表示を知らせる
   PROGRESS: 'progress', // { pending }：ボタンのバッジ
   LOG: 'log', // { event, data, source? }：調査用のログ
-  TRANSLATE_ONE: 'translate-one', // { text, source?, target?（訳文の言語。既定は ja）, lines?, stream? } → { ok, text, model, tokens, genMs }（選択範囲・テキスト翻訳。stream を渡すと途中を TEXT_PARTIAL で知らせる）
+  TRANSLATE_ONE: 'translate-one', // { text, source?, target?（訳文の言語。無ければ設定の値）, lines?, stream? } → { ok, text, model, target, tokens, genMs }（選択範囲・テキスト翻訳。stream を渡すと途中を TEXT_PARTIAL で知らせる）
   OPEN_TEXT_WITH: 'open-text-with', // { text }：選んだ文章を入れてテキスト翻訳を開く
 
   // page/watch.js → Service Worker
@@ -18,7 +18,7 @@ export const MSG = {
   SELECTION_ICON: 'selection-icon', // { text }
 
   // 画面（ui/）→ Service Worker
-  STATUS: 'status', // → { loaded, loading, device, threads, adapter, parallel, ubatch, model, idleMinutes, lastUse }
+  STATUS: 'status', // → { loaded, loading, device, threads, adapter, gpu, fallback, parallel, ubatch, model, idleMinutes, lastUse }
   UNLOAD: 'unload',
   PAGE_ACTION: 'page-action', // { tabId, action: 'toggle'|'trans'|'orig'|'both'|'stop' }
   SWITCH_MODEL: 'switch-model', // { model, tabId }
@@ -32,9 +32,10 @@ export const MSG = {
   FONT_CACHE_CLEAR: 'font-cache-clear',
   LOGS_GET: 'logs-get',
   LOGS_CLEAR: 'logs-clear',
-  SPEED_TEST: 'speed-test', // → { ok, row }：今の設定で速さを測る
+  SPEED_TEST: 'speed-test', // → { ok, result }：今の設定で速さを測る（結果は TUNE と同じ形）
   TUNE: 'tune', // → { ok, result }：このPCに合わせる（設定を変えて測り、いちばん速い設定を保存する）
   TUNE_STOP: 'tune-stop',
+  GPU_CHECK: 'gpu-check', // → { ok, ready, adapter, distinct, error, crashed, at, source }：使う GPU を確かめる（モデルを読み込み済みならその報告、無ければモデルなしで推論エンジンを起動して確かめる）
 
   // Offscreen Document（offscreen/）→ Service Worker
   MODEL_PROGRESS: 'local-progress', // { model, loaded, total }
@@ -44,13 +45,13 @@ export const MSG = {
   TUNE_PROGRESS: 'tune-progress', // { text?, rows? }：速さの調整の途中経過
 
   // Service Worker → ページ
-  TOGGLE: 'toggle', // { mode }：未翻訳なら訳す、訳した後は原文⇄訳文
-  START: 'start', // { mode }
+  TOGGLE: 'toggle', // { mode, target }：未翻訳なら訳す、訳した後は原文⇄訳文（訳文の言語が変わっていたら訳し直す）
+  START: 'start', // { mode, target }
   STOP: 'stop', // 翻訳をやめて元のページに戻す
   RETRANSLATE: 'retranslate', // { model }
   NOTICE: 'notice', // { text }：モデルの準備の進み具合
   TRANSLATE_SELECTION: 'translate-selection', // { text }：選択範囲の訳を吹き出しで出す
-  TRANSLATE_SELECTED_PARAGRAPHS: 'translate-selected-paragraphs', // { mode }：選択した段落を訳文に置き換える
+  TRANSLATE_SELECTED_PARAGRAPHS: 'translate-selected-paragraphs', // { mode, target }：選択した段落を訳文に置き換える
   GET_STATE: 'get-state', // → { translating }
   SHOW_PARTIAL: 'show-partial', // { id, lines: [{ i, text, complete }] }：訳し終わった行、または生成中の行の文末まで
 
@@ -61,6 +62,7 @@ export const MSG = {
   // Service Worker → Offscreen Document（{ target: 'offscreen' } を付ける）
   COMPLETE: 'complete', // { requestId, model, device, threads, parallel, ubatch, prompt, maxTokens, lines, stop, debugLog } → { ok, text, cut, tokens, genMs, loadMs } | { ok:false, cancelled }
   MODEL_STATUS: 'status',
+  MODEL_GPU_CHECK: 'gpu-check',
   MODEL_CANCEL: 'cancel', // { requestId }
 };
 

@@ -1,6 +1,7 @@
 // PDF の文字を1文字ずつ読み、セグメント（同じ基線の文字の並び）→段落に組み、
 // 段落の中のリンク・太字・等幅をマーカー（shared/markup.js）にした1行を作る。
 // 流れと判定の理由は docs/12_PDFの翻訳.md「段落の組み立て」。
+import { writtenOnlyIn } from '../shared/languages.js';
 import { encode } from '../shared/markup.js';
 
 const BOLD = /bold|black|heavy/i;
@@ -19,8 +20,9 @@ const FORM_OBJECT = 5; // FPDF_PAGEOBJ_FORM
  *   page・text（マーカー付きの1行）・plain・kinds・elems（要素の番号順：kind 'a'|'c'、link＝注釈の番号、bold、code）・whole（段落全体が1つのリンク）
  *   x0・right・y（1行目の基線）・bottom（最後の行の基線）・lines・lead・size・bold・color
  *   objs（訳す文字を含むテキストのオブジェクトの道筋）・chars（段落の全文字。tr＝訳す文字か）・skip（訳さない理由）
+ * target は訳文の言語のコード。もうその言語で書かれた段落は訳さない。
  */
-export function extractParagraphs(X) {
+export function extractParagraphs(X, target = 'ja') {
   const { P, doc } = X;
   const out = [];
   for (let pi = 0, n = P.FPDF_GetPageCount(doc); pi < n; pi++) {
@@ -34,14 +36,14 @@ export function extractParagraphs(X) {
     }
   }
   // 3ページ以上で同じ位置に同じ文字列（数字は問わない）がある段落はヘッダー・フッターとして訳さない。
-  // 訳す文字の無い段落（番号・点線）と、もう日本語の段落も訳さない。
+  // 訳す文字の無い段落（番号・点線）と、もう訳文の言語で書かれた段落（shared/languages.js の writtenOnlyIn）も訳さない。
   const keyOf = (p) => `${Math.round(p.y)}|${p.plain.replace(/\d+/g, '#')}`;
   const repeats = new Map();
   for (const p of out) repeats.set(keyOf(p), (repeats.get(keyOf(p)) ?? 0) + 1);
   for (const p of out) {
     p.skip = repeats.get(keyOf(p)) >= 3 ? 'repeat'
       : !/\p{L}{2,}/u.test(p.plain) ? 'no-words'
-      : /[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(p.plain) ? 'japanese'
+      : writtenOnlyIn(p.plain, target) ? 'target-language'
       : null;
   }
   return out;

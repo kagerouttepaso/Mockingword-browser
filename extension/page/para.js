@@ -29,7 +29,7 @@ export const PARA_FIELDS = {
 /** 段落を作り、文字のノードと隠す要素から段落を引けるようにする。訳す価値が無ければ null。 */
 export function createPara(element, nodes) {
   const { text, plain, marks, hide, root, fontFamily } = markup(element, nodes);
-  if (!worthTranslating(plain)) return null;
+  if (!worthTranslating(plain, state.target)) return null;
   const para = { element, nodes, text, marks, hide, root, fontFamily, group: groupOf(element, nodes), translation: null, trSpan: null };
   for (const n of nodes) {
     state.seen.add(n);
@@ -45,7 +45,7 @@ export function createPara(element, nodes) {
  */
 export function refreshPara(para) {
   const { text, plain, marks, hide, root, fontFamily } = markup(para.element, para.nodes.filter((n) => n.isConnected));
-  if (text === para.text || !worthTranslating(plain)) return false;
+  if (text === para.text || !worthTranslating(plain, state.target)) return false;
   Object.assign(para, { text, marks, hide, root, fontFamily });
   for (const el of hide) state.hideOwner.set(el, para);
   return true;

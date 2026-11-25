@@ -4,7 +4,8 @@ export function createPdfBatchRequests(connect) {
   let sequence = 0;
   const inflight = new Set();
   return {
-    translate(texts, onPartial) {
+    /** texts を訳文の言語 target へ訳す。 */
+    translate(texts, target, onPartial) {
       const id = ++sequence;
       return new Promise((resolve, reject) => {
         const port = connect({ name: PDF_BATCH_PORT });
@@ -22,7 +23,7 @@ export function createPdfBatchRequests(connect) {
           else finish(message);
         });
         try {
-          port.postMessage({ type: MSG.TRANSLATE_BATCH, texts, id });
+          port.postMessage({ type: MSG.TRANSLATE_BATCH, texts, id, target });
         } catch (e) {
           finish({ error: e.message });
         }

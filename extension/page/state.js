@@ -5,6 +5,8 @@ import { LOG_TAG, MSG } from '../shared/messages.js';
 export const state = {
   /** ページ全体を訳しているか（段落だけ訳したときは false）。 */
   started: false,
+  /** 訳文の言語（shared/languages.js のコード）。訳し始めたときの設定の値で、元のページに戻すまで変えない。 */
+  target: 'ja',
   /** 表示：'trans'（訳文）・'orig'（原文）・'both'（対訳）。 */
   mode: 'trans',
   /** 原文を表示する前に見せていた表示。原文⇄訳文の切り替えで戻す先。 */

@@ -1,7 +1,8 @@
 // 壊れても普段の利用では気づけないまま訳文が欠ける・誤るものだけを確かめる（docs/06「試験」）。実行：node --test tools/unit.test.mjs
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { pageReadable, runaway, splitLong, untranslated } from '../extension/shared/text.js';
+import { pageReadable, runaway, splitLong, untranslated, worthSelection, worthTranslating } from '../extension/shared/text.js';
+import { layout } from '../extension/pdf/layout.js';
 import { classifyFontFamily, DEFAULT_PAGE_FONTS, fontFileSpec, normalizePageFonts, pickFontWeights } from '../extension/shared/fonts.js';
 import { translateBatch } from '../extension/core/translator.js';
 import { streamPartial } from '../extension/core/engine.js';
@@ -13,6 +14,7 @@ import { createPdfBatchRequests } from '../extension/ui/pdf-batches.js';
 import { createPages } from '../extension/ui/pdf-pages.js';
 import { createStore } from '../extension/ui/pdf-state.js';
 import { analyzeUx, dispatchDiagnostics, median } from './profile/replay-ux-analysis.mjs';
+import { adapterLabel, chosenAdapter, distinctAdapters, isEngineCrash, parseGpuReport } from '../extension/offscreen/gpu.js';
 
 const pdfParas = (...texts) => texts.map((text) => ({ text, plain: text, size: 12, lines: 1 }));
 
@@ -125,7 +127,7 @@ test('PDFの中止は未完了の全バッチを切断し、古い途中経過�
   const done = [];
   const options = {
     parallel: 3, focus: () => 0,
-    translate: (texts) => batches.translate(texts, (lines) => previews.push({ texts, lines })),
+    translate: (texts) => batches.translate(texts, 'ja', (lines) => previews.push({ texts, lines })),
     onResult(part, _results, pages) { done.push({ part, pages }); },
   };
   const controller = new AbortController();
@@ -352,6 +354,32 @@ test('untranslated：短い英字のバッジだけの行は、英語のまま�
   assert.equal(untranslated('<a1>This value may not be changed by scripts</a1>', '<a1>This value may not be changed by scripts</a1>'), true, '長い文のバッジは訳し直す');
 });
 
+test('訳文の言語：もうその言語で書かれた文は訳さず、訳文にその言語の文字が無い行は訳し直す', () => {
+  // 日本語へ訳すとき：かなを含む文は訳さない。日本語以外へ訳すときは日本語の文も訳す
+  assert.equal(worthTranslating('これは日本語の文です'), false);
+  assert.equal(worthTranslating('これは日本語の文です', 'en'), true);
+  assert.equal(worthSelection('これは日本語の文です', 'ko'), true);
+  // 文字でその言語と決められるときだけ訳さない（ハングルは韓国語、ラテン文字は英語とは決められない）
+  assert.equal(worthTranslating('한국어 문장입니다', 'ko'), false);
+  assert.equal(worthTranslating('An English sentence.', 'en'), true);
+  // 中国語へ訳すとき、漢字だけの文は訳さないが、かなの混ざる日本語の文は訳す
+  assert.equal(worthTranslating('这是中文句子', 'zh-hans'), false);
+  assert.equal(worthTranslating('漢字とかなの文', 'zh-hans'), true);
+  // まとめ訳しで原文のまま返った行：訳文の言語の文字が無ければ訳し直す
+  assert.equal(untranslated('これはペンです', 'これはペンです', 'en'), true);
+  assert.equal(untranslated('これはペンです', 'This is a pen.', 'en'), false);
+  assert.equal(untranslated('This is a pen.', 'Это ручка.', 'ru'), false);
+  assert.equal(untranslated('This sentence was copied as it is.', 'This sentence was copied as it is!', 'ko'), true);
+});
+
+test('PDFの行分け：空白で語を区切る文字は語の途中で折り返さず、漢字・かなは1文字ずつ折り返す', () => {
+  const measure = (text) => [...text].length;
+  const lines = (text, width) => layout([{ text, bold: false }], width, 1, measure).map((line) => line.map((a) => a.s).join(''));
+  assert.deepEqual(lines('Привет мир, это тест', 12), ['Привет мир,', 'это тест']);
+  assert.deepEqual(lines('Xin chào thế giới', 9), ['Xin chào', 'thế giới']);
+  assert.deepEqual(lines('これは日本語です。', 4), ['これは日', '本語です。']);
+});
+
 test('pageReadable：HTML・XML・テキストの文書だけページ側の部品を使う。PDF・画像は内蔵ビューアの文書として扱う', () => {
   for (const t of ['text/html', 'application/xhtml+xml', 'image/svg+xml', 'application/xml', 'text/plain', '']) assert.equal(pageReadable(t), true, t);
   for (const t of ['application/pdf', 'image/png', 'video/mp4']) assert.equal(pageReadable(t), false, t);
@@ -385,4 +413,22 @@ test('normalizePageFonts・pickFontWeights：不正な値を既定へ戻し、�
     contentType: 'font/ttf',
   });
   assert.equal(fontFileSpec('noto-sans-jp', 400).contentType, 'font/woff2');
+});
+
+test('推論エンジンの GPU の報告を読み、使っている GPU とブラウザーが見せる GPU の数を出す。読めない行・計算の停止も見分ける', () => {
+  // ggml-webgpu のパッチ（tools/wllama/patches/adapter）が出す形。wllama は行頭に印を付けずに渡すことがある。
+  const line = 'ggml_webgpu: report {"ready":true,"candidates":['
+    + '{"preference":"high-performance","vendor":"intel","architecture":"xe-lpg","device":"","description":"Intel(R) Arc(TM) \\"G\\"","vendorId":32902,"deviceId":32085,"shaderF16":true,"subgroups":true,"subgroupMinSize":8,"subgroupMaxSize":32},'
+    + '{"preference":"default","vendor":"intel","architecture":"xe-lpg","device":"","description":"Intel(R) Arc(TM) \\"G\\"","vendorId":32902,"deviceId":32085,"shaderF16":true,"subgroups":true,"subgroupMinSize":8,"subgroupMaxSize":32},'
+    + '{"preference":"low-power","error":"none"}],'
+    + '"chosen":"high-performance","device":"adapter-max-limits optional-features","probe":{"add":136,"subgroups":true,"subgroupSize":16,"note":null},"error":null}';
+  const report = parseGpuReport(line);
+  assert.equal(report.ready, true);
+  assert.equal(adapterLabel(chosenAdapter(report)), 'Intel(R) Arc(TM) "G" / intel / xe-lpg');
+  assert.equal(distinctAdapters(report), 1); // 求め方を変えても同じ GPU（ブラウザーが1つしか見せていない）
+  assert.equal(parseGpuReport('ggml_webgpu: adapter_info: vendor_id: 1'), null);
+  assert.equal(parseGpuReport('ggml_webgpu: report {broken'), null);
+  assert.equal(isEngineCrash(new Error('(ABORT) ')), true);
+  assert.equal(isEngineCrash(new Error('wllama has crashed, please reload the module')), true);
+  assert.equal(isEngineCrash(new Error('取り消し済み')), false);
 });

@@ -5,7 +5,8 @@ import { MSG } from '../shared/messages.js';
 import { LOCAL_DEFAULTS, normalizeLocal } from '../shared/settings.js';
 import { chunk, groupedChunk, short } from '../shared/text.js';
 import { connected, regroup } from './para.js';
-import { barHasError, barMessage, setBarDone, showBar, updateBar } from './bar.js';import { clearNotice } from './bubble.js';
+import { barHasError, barMessage, setBarDone, showBar, updateBar } from './bar.js';
+import { clearNotice } from './bubble.js';
 import { apply, applyPartial, clearPartial, setWorking } from './write.js';
 import { isFront, markReading, onScreen, priority } from './priority.js';
 import { debug, log, notify, seconds, send, state, tokensPerSecond, trace } from './state.js';
@@ -124,7 +125,7 @@ export async function enqueue(paras) {
     updateBar();
     let r;
     try {
-      r = await send({ type: MSG.CACHE_LOOKUP, texts: misses.map((p) => p.text) }).catch(() => null);
+      r = await send({ type: MSG.CACHE_LOOKUP, texts: misses.map((p) => p.text), target: state.target }).catch(() => null);
     } finally {
       state.looking -= misses.length;
     }
@@ -188,7 +189,7 @@ async function runChunk(chunk, generation) {
   trace('送信', { id, lines: texts.length, chars: texts.join('').length, screen, texts: texts.map((s) => short(s)), inflight: state.chunks.size, pending: state.pending.size });
   let response;
   try {
-    response = await send({ type: MSG.TRANSLATE_BATCH, texts, id });
+    response = await send({ type: MSG.TRANSLATE_BATCH, texts, id, target: state.target });
   } catch (e) {
     response = { ok: false, error: e.message };
   } finally {

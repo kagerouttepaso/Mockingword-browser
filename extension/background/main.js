@@ -2,11 +2,12 @@
 // 部品の全体像とメッセージの流れは docs/02_アーキテクチャ.md。
 
 import { LOG_SOURCE, LOG_TAG, MSG, OFFSCREEN, PDF_BATCH_PORT } from '../shared/messages.js';
-import { CancelledError, cancel, forget, previewRows, status, streamPartial, unload } from '../core/engine.js';
+import { CancelledError, cancel, checkGpu, forget, previewRows, status, streamPartial, unload } from '../core/engine.js';
 import { lookupCached, translateBatch, translateLines, translateText } from '../core/translator.js';
 import { clear as clearCache, stats as cacheStats } from '../core/cache.js';
 import { clearFontCache, fontCacheStats, getFontCatalog, loadPageFont } from '../core/fonts.js';
 import { migrate, settings } from './config.js';
+import { normalizeTarget } from '../shared/languages.js';
 import { addLog, clearLogs, logs } from './logs.js';
 import { lastUse, markUse, startIdleCheck } from './idle.js';
 import { buildMenus, fitMenus } from './menus.js';
@@ -40,6 +41,15 @@ const requestIdOf = (sender, id, pdf = false) => pdf
   ? `pdf:${sender.documentId}:${id}`
   : `page:${sender.tab?.id}:${sender.frameId}:${id}`;
 
+/**
+ * 依頼に訳文の言語（target）があれば、設定の訳文の言語の代わりに使う。ページは訳し始めたときの言語を、PDF翻訳のページは
+ * 画面で選んだ言語を、訳し終えるまで送り続ける（途中で設定を変えても、1つのページの中で言語が混ざらない）。
+ */
+function withTarget(options, message) {
+  if (message.target) options.target = normalizeTarget(message.target);
+  return options;
+}
+
 /** 訳しているページのバッチのリクエスト番号（取り消しを、訳している間だけ効かせる）。 */
 const batches = new Set();
 
@@ -51,7 +61,7 @@ const handlers = {
     const t0 = Date.now();
     batches.add(requestId);
     try {
-      const options = await settings();
+      const options = withTarget(await settings(), message);
       await markUse();
       const r = await translateBatch(message.texts, { ...options, requestId, onPreview });
       addLog(LOG_SOURCE.background, '完了', { requestId, ms: Date.now() - t0, requests: r.stats.requests, fallback: r.stats.fallback });
@@ -69,9 +79,9 @@ const handlers = {
   async [MSG.TRANSLATE_ONE](message, sender, options) {
     lastTabId = sender.tab?.id ?? lastTabId;
     await markUse();
-    // テキスト翻訳のページは原文と訳文の言語を自分で選び、行ごとに訳す（lines）。ほかは日本語へ訳す。
+    // テキスト翻訳のページは原文と訳文の言語を自分で選び、行ごとに訳す（lines）。ほかは設定の訳文の言語へ訳す。
     if (message.source !== undefined) options.source = message.source || null;
-    if (message.target) options.target = message.target;
+    withTarget(options, message);
     // stream：テキスト翻訳のページへ、訳文の途中と生成したトークン数を0.1秒おきに知らせる（待たずに読めるように）。
     // 速さは最初のトークンからの時間で割る（モデルの読み込み・原文の読み込みの待ちを入れない）。
     let tokens = 0;
@@ -90,10 +100,10 @@ const handlers = {
     }
     const text = message.lines ? await translateLines(message.text, options) : await translateText(message.text, options);
     await markUse();
-    return { ok: true, model: options.model, text, tokens, genMs: firstAt ? Date.now() - firstAt : 0 };
+    return { ok: true, model: options.model, target: options.target, text, tokens, genMs: firstAt ? Date.now() - firstAt : 0 };
   },
   async [MSG.CACHE_LOOKUP](message, _sender, options) {
-    const results = await lookupCached(message.texts, options);
+    const results = await lookupCached(message.texts, withTarget(options, message));
     addLog(LOG_SOURCE.background, 'キャッシュ', { asked: message.texts.length, hits: results.filter((r) => r !== null).length });
     return { ok: true, results, model: options.model };
   },
@@ -136,6 +146,13 @@ const handlers = {
   },
   async [MSG.STATUS](_message, _sender, options) {
     return { ok: true, ...(await status()), model: options.model, idleMinutes: options.idleMinutes, lastUse: await lastUse() };
+  },
+  async [MSG.GPU_CHECK]() {
+    // 速さの調整の途中は、推論エンジンをもう1つ起動して測定に混ざらないよう、確かめない。
+    if (tuning()) return { ok: false, error: '速さの調整の途中です。終わってから確かめてください。' };
+    const result = await checkGpu();
+    addLog(LOG_SOURCE.background, 'GPUの確認', result);
+    return result;
   },
   async [MSG.UNLOAD]() {
     if (tuning()) return { ok: false, error: '速さの調整の途中です。' };

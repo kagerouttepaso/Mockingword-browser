@@ -1,10 +1,8 @@
 // 文の判定と分割。DOM にも chrome にも触れない純粋な関数だけを置く（Node の単体試験 tools/unit.test.mjs で確かめる）。
 // Service Worker（core/）・Offscreen Document（offscreen/）・ページ側（page/）から使う。
 
+import { hasScriptOf, writtenOnlyIn } from './languages.js';
 import { MARK_TAG, labelsOf } from './markup.js';
-
-const JAPANESE = /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u;
-const KANA = /[぀-ヿ]/;
 
 /** 空白をまとめて前後を落とす。 */
 export function normalize(text) {
@@ -17,30 +15,30 @@ export function short(text, max = 60) {
 }
 
 /**
- * ページの段落として訳す価値のある文か。
- * - 日本語（かな）を含む文、文字を含まない記号・数字だけの文は訳さない。
+ * ページの段落として訳す価値のある文か。target は訳文の言語のコード。
+ * - もう訳文の言語で書かれた文（日本語へ訳すならかなを含む文。shared/languages.js の writtenOnlyIn）、文字を含まない記号・数字だけの文は訳さない。
  * - CSS・JavaScript のような文（{ } ; が多い）は訳さない（2026-11-09、グラフ部品の CSS を訳しに行き41秒待たされた）。
  * - 英字1文字（記号代わりの x など）は訳さない。ハングル・漢字は1文字でも語になる（홈＝ホーム）。
  */
-export function worthTranslating(text) {
+export function worthTranslating(text, target = 'ja') {
   if (!/\p{L}/u.test(text)) return false;
   if (text.length > 80 && (text.match(/[{};]/g)?.length ?? 0) / text.length > 0.02) return false;
   if (text.length < 2 && !/[\p{Script=Hangul}\p{Script=Han}]/u.test(text)) return false;
-  if (KANA.test(text)) return false;
+  if (writtenOnlyIn(text, target)) return false;
   return true;
 }
 
-/** 選択範囲として訳す価値のある文か（「訳」アイコンを出すか）。 */
-export function worthSelection(text) {
-  return text.length >= 2 && text.length <= 5000 && /\p{L}/u.test(text) && !KANA.test(text);
+/** 選択範囲として訳す価値のある文か（「訳」アイコンを出すか）。もう訳文の言語で書かれた文には出さない。 */
+export function worthSelection(text, target = 'ja') {
+  return text.length >= 2 && text.length <= 5000 && /\p{L}/u.test(text) && !writtenOnlyIn(text, target);
 }
 
 /** 原文のまま返るのが正しいことが多い、短い英字のラベル（3語以下かつ24字以下。製品名・モデル名・ボタン名・バッジ）か。 */
 const shortLatinLabel = (s) => !/[^\p{Script=Latin}\p{Script=Common}\p{Script=Inherited}]/u.test(s) && s.split(' ').length <= 3 && s.length <= 24;
 
 /**
- * まとめ訳しの1行が訳されていないか。原文のままか、日本語へ訳すときは文字を含む原文に対して日本語の文字が1つもない
- * （target は訳文の言語のコード。日本語以外へ訳すときは、原文のままかだけを見る）。
+ * まとめ訳しの1行が訳されていないか。原文のままか、文字を含む原文に対して訳文の言語の文字が1つもない
+ * （target は訳文の言語のコード。文字の判定は shared/languages.js の hasScriptOf。日本語なら漢字・かな、英語ならラテン文字）。
  * 言語の混ざったバッチでは、最初の言語の行だけ訳し、残りの行を原文のまま写すことがある
  * （2026-11-09、0.8Bで韓国語・フランス語・ドイツ語の3行）。その行だけ1行ずつ訳し直すために見る。
  * 短い英字の行（3語以下かつ24字以下。製品名・モデル名・ボタン名）は、原文のまま返るのが正しいことが多いので訳し直さない
@@ -54,7 +52,7 @@ export function untranslated(source, output, target = 'ja') {
   const plain = norm(source);
   if (shortLatinLabel(plain) || labelsOf(source)?.every(shortLatinLabel)) return false;
   const out = norm(output);
-  return plain === out || (target === 'ja' && /\p{L}/u.test(plain) && !JAPANESE.test(out));
+  return plain === out || (/\p{L}/u.test(plain) && !hasScriptOf(out, target));
 }
 
 /** 長い1段落を、文の切れ目でおよそ max 字ずつに分ける（1スロット4096トークンに収め、生成の打ち切りも避ける）。 */

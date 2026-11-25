@@ -73,19 +73,29 @@
     <legend>このPCの性能に合わせる</legend>
     <small>この欄の設定はPCごとに保存し、ほかのPCへ同期しません（内蔵GPUのPCと単体GPUのPCで合う値が違うため）。
       変えると、読み込んでいるモデルを解放し、次に訳すときに新しい設定で読み込みます。</small>
+    <h3>使う GPU</h3>
     <div class="tune-box">
-      <span id="tunestate">「このPCに合わせる」を押すと、設定を変えながら同じ文章を訳して時間を比べ、いちばん速い設定を保存します（今のモデルで1〜4分。測っている間はPCを操作しないでください。0.8Bと2Bで合う値が違うので、モデルを替えたら合わせ直してください）。</span>
+      <span><span id="adapter">確かめています…</span><br><small id="gpunote"></small></span>
+      <span class="buttons"><button id="gpucheck">確かめ直す</button></span>
+    </div>
+    <small>単体GPU・外付けGPUで動かしたいとき：このブラウザーが使う GPU は、ブラウザーの外で決まり、拡張機能からは選べません。次のどちらかをしてブラウザーを再起動し、「確かめ直す」を押してください。</small>
+    <ol class="gpu-steps">
+      <li><small>Windows の設定（システム → ディスプレイ → グラフィックス）で、このブラウザーに「高パフォーマンス」か、使う GPU を選ぶ</small> <button id="opengraphics">設定を開く</button></li>
+      <li><small><code id="flagurl"></code> を Enabled にする</small> <button id="openflags">開く</button></li>
+    </ol>
+    <h3>動作モード</h3>
+    <label><input type="radio" name="device" value="auto"> 自動（GPU が使えれば GPU、使えない・計算が止まったときは CPU）</label>
+    <label><input type="radio" name="device" value="gpu"> GPU（WebGPU）</label>
+    <label><input type="radio" name="device" value="cpu"> CPU</label>
+    <h3>速さを測る</h3>
+    <div class="tune-box">
+      <span id="tunestate">「このPCに合わせる」を押すと、設定を変えながら同じ文章を訳して時間を比べ、いちばん速い設定を保存します（今のモデルで1〜4分。測っている間はPCを操作しないでください。0.8Bと2Bで合う値が違うので、モデルを替えたら合わせ直してください）。「今の設定で測る」は今の設定だけを測ります。</span>
       <span class="buttons"><button id="tune">このPCに合わせる</button><button id="tunestop" hidden>途中でやめる</button><button id="speed">今の設定で測る</button></span>
     </div>
     <table id="tunerows" hidden>
       <thead><tr><th>設定</th><th>試験用の文章24件を訳す時間（キャッシュなし）</th><th>最初の1件</th><th>生成の速さ</th><th></th></tr></thead>
       <tbody></tbody>
     </table>
-    <h3>動作モード</h3>
-    <label><input type="radio" name="device" value="auto"> 自動（GPU が使えれば GPU、読み込めなければ CPU）</label>
-    <label><input type="radio" name="device" value="gpu"> GPU（WebGPU）</label>
-    <label><input type="radio" name="device" value="cpu"> CPU</label>
-    <small>使う GPU：<span id="adapter">確認中…</span></small>
     <h3>細かい調整</h3>
     <label class="inline">同時に翻訳する数 <select name="parallel" id="parallel"></select></label>
     <br><small>ページの翻訳で、同時にモデルへ送る文章のまとめの数です。GPU の性能に余裕があるほど、多くすると全体が速くなります。多すぎると1件ずつが遅くなり、画面内が出るまでが延びます。</small>
@@ -116,6 +126,13 @@
   </fieldset>
 
   <fieldset>
+    <legend>訳文の言語</legend>
+    <select name="target" id="target"></select>
+    <br><small>ページの翻訳と選択範囲の訳を、この言語へ訳します。PDF翻訳では、画面で選ぶ言語の最初の値になります。テキスト翻訳の言語は、そのページで選びます。
+      訳したページで言語を変えたときは、もう一度「このページを訳す」（Alt+T）を押すと、新しい言語で訳し直します。</small>
+  </fieldset>
+
+  <fieldset id="form-fieldset">
     <legend>訳文の文体</legend>
     <label><input type="radio" name="form" value="polite"> です・ます</label>
     <label><input type="radio" name="form" value="plain"> だ・である</label>
@@ -124,14 +141,14 @@
   <fieldset>
     <legend>ページの翻訳：原文の言語</legend>
     <select name="source" id="source"></select>
-    <br><small>既定の「自動」では、PLaMoが扱う52言語（日本語を除く）を段落ごとにモデルが判定して訳します。
+    <br><small>既定の「自動」では、PLaMoが扱う53言語を段落ごとにモデルが判定して訳します。訳文の言語で書かれた段落は訳しません。
       自動で訳が崩れるページだけ、言語を決めてください。テキスト翻訳の言語は、そのページで選びます。</small>
   </fieldset>
 
   <fieldset>
     <legend>選択範囲の翻訳</legend>
     <label><input type="checkbox" name="selectionIcon"> 文章を選んだら鳥のアイコンを出す（押すと選択範囲の訳を吹き出しで出す）</label>
-    <small>日本語（かな）を含む選択や、入力欄の中の選択には出しません。右クリックの「選択範囲を日本語に訳す」はこの設定によらず使えます。</small>
+    <small>訳文の言語で書かれた選択（日本語へ訳すなら、かなを含む選択）や、入力欄の中の選択には出しません。右クリックの「選択範囲を…に訳す」はこの設定によらず使えます。</small>
   </fieldset>
 
   <fieldset>
@@ -141,8 +158,9 @@
     <small>Alt+T（またはボタンのメニューの「このページを訳す」）をもう一度押すと原文に戻り、さらに押すとこの表示に戻ります。</small>
   </fieldset>
 
-  <fieldset>
+  <fieldset id="font-fieldset">
     <legend>ページの翻訳：訳文のフォント</legend>
+    <small id="font-ja-only" hidden>訳文の言語が日本語のときだけ使います。今の訳文の言語では、訳文は元のページのフォントで表示します。</small>
     <label class="inline"><input type="checkbox" id="pageFontsEnabled"> 元のページの雰囲気に合わせて日本語フォントを切り替える</label>
     <br><small>見出しの等幅フォントや本文のサンセリフ・明朝・丸ゴシックを自動判定し、英数字は元サイトのフォントを残したまま日本語だけ雰囲気の近い書体にします。選んだフォントは初回だけ jsDelivr（Fontsource）から取得してブラウザー内にキャッシュします。</small>
     <div id="fontRows" class="font-rows"></div>

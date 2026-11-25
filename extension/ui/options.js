@@ -1,6 +1,7 @@
 // 設定画面。選んだ値は chrome.storage.sync（同期する設定）か chrome.storage.local（PCごとの調整）に置き、
 // Service Worker（background/config.js）が翻訳のたびに読む。
-import { DEFAULTS, LOCAL_DEFAULTS, PARALLEL_CHOICES, UBATCH_CHOICES, fillLanguages, describeStatus, normalizeLocal } from '../shared/settings.js';
+import { DEFAULTS, LOCAL_DEFAULTS, PARALLEL_CHOICES, UBATCH_CHOICES, fillLanguages, fillTargets, describeStatus, normalizeLocal } from '../shared/settings.js';
+import { normalizeTarget } from '../shared/languages.js';
 import { MSG } from '../shared/messages.js';
 import { describeGpu, describeGpuCheck } from '../shared/gpu.js';
 import { initFontOptions } from './options-fonts.js';
@@ -13,6 +14,15 @@ for (let n = 1; n <= cores; n++) threads.append(new Option(String(n), String(n))
 for (const n of PARALLEL_CHOICES) document.getElementById('parallel').append(new Option(`${n}件${n === LOCAL_DEFAULTS.parallel ? '（既定）' : ''}`, String(n)));
 for (const n of UBATCH_CHOICES) document.getElementById('ubatch').append(new Option(`${n}${n === LOCAL_DEFAULTS.ubatch ? '（既定）' : ''}`, String(n)));
 fillLanguages(document.getElementById('source'));
+document.getElementById('source').add(new Option('日本語', 'ja'), 1); // 日本語以外へ訳すときの原文の言語
+fillTargets(document.getElementById('target'));
+
+/** 文体（です・ます）と訳文のフォントは日本語の訳文にだけある。ほかの言語では文体を隠し、フォントは使わないと示す。 */
+function showTargetOnly(target) {
+  const ja = normalizeTarget(target) === 'ja';
+  document.getElementById('form-fieldset').hidden = !ja;
+  document.getElementById('font-ja-only').hidden = ja;
+}
 
 const NUMBERS = ['threads', 'idleMinutes', 'parallel', 'ubatch'];
 
@@ -27,13 +37,16 @@ function show(values) {
     if (select) select.value = String(value);
   }
 }
-show(await chrome.storage.sync.get(DEFAULTS));
+const synced = await chrome.storage.sync.get(DEFAULTS);
+show({ ...synced, target: normalizeTarget(synced.target) });
+showTargetOnly(synced.target);
 show(normalizeLocal(await chrome.storage.local.get(LOCAL_DEFAULTS)));
 document.addEventListener('change', (e) => {
   const { name, value } = e.target;
   if (!name) return;
   const v = e.target.type === 'checkbox' ? e.target.checked : NUMBERS.includes(name) ? Number(value) : value;
   (name in LOCAL_DEFAULTS ? chrome.storage.local : chrome.storage.sync).set({ [name]: v });
+  if (name === 'target') showTargetOnly(v);
   setTimeout(render, 300); // PCごとの調整を変えると解放されるので、状態を出し直す
 });
 // 「このPCに合わせる」で選んだ値が保存されたら、画面の選択にも出す。

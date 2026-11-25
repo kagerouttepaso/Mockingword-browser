@@ -1,6 +1,7 @@
 // 訳文をページに書き込む・消す。表示の切り替えは html 要素の data-plamo-mode と page/page.css だけで行う
 // （trans：訳文、orig：原文、both：対訳）。設計は docs/04_ページの翻訳.md「書き込み」。
 
+import { isRtl, langTag } from '../shared/languages.js';
 import { decode, previewLine, remainingSource } from '../shared/markup.js';
 import { applyTranslationFont, clearPageFonts } from './fonts.js';
 import { state } from './state.js';
@@ -95,7 +96,8 @@ function translationSpan(para, last) {
     // サイトの CSS（例：.Title span）が誤爆しないよう、汎用 span ではなくカスタム要素名を使う。
     const span = document.createElement('mw-tr');
     span.className = 'plamo-tr';
-    span.lang = 'ja';
+    span.lang = langTag(state.target);
+    if (isRtl(state.target)) span.dir = 'rtl';
     span.setAttribute('translate', 'no');
     // 置き場所：段落の文字をすべて含むいちばん内側の要素（markup の root。太字だけの行・見出しのリンクならその中）の直下で、
     // 最後の文字の後ろ。太字の見出しは太字のまま、見出しのリンクは押せるままになる。
@@ -104,7 +106,8 @@ function translationSpan(para, last) {
     while (anchor.parentNode && anchor.parentNode !== root) anchor = anchor.parentNode;
     anchor.parentNode.insertBefore(span, anchor.nextSibling);
     para.trSpan = span;
-    applyTranslationFont(para, span);
+    // 訳文のフォントの設定は日本語のフォント（shared/fonts.js）なので、日本語へ訳すときだけ当てる。
+    if (state.target === 'ja') applyTranslationFont(para, span);
   }
   return para.trSpan;
 }

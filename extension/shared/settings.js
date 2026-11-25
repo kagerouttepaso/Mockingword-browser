@@ -1,6 +1,7 @@
 // 設定の既定値と選択肢。Service Worker・ボタンのメニュー・設定画面・テキスト翻訳で共有する。
 
 import { DEFAULT_PAGE_FONTS } from './fonts.js';
+import { DEFAULT_TARGET, LANGUAGES, TARGETS } from './languages.js';
 
 /**
  * chrome.storage.sync に置く設定（Brave の同期で、ほかのPCとそろう）。
@@ -9,9 +10,10 @@ import { DEFAULT_PAGE_FONTS } from './fonts.js';
  * mode：訳したときの表示。'trans'（訳文だけ）・'both'（原文と訳文を並べる）。
  * selectionIcon：文章を選んだときに「訳」アイコンを出すか。
  * debugLog：調査用のログを残すか（ページ・Service Worker・モデルの出来事。設定画面から保存できる）。
- * pageFonts：ページ翻訳で使う日本語フォント（4系統ごとの Fontsource ID と有効・無効）。
+ * target：訳文の言語（shared/languages.js のコード）。ページの翻訳・選択範囲の訳で使い、PDF翻訳の画面の既定にする。テキスト翻訳はその画面で選ぶ。
+ * pageFonts：ページ翻訳で使う日本語フォント（4系統ごとの Fontsource ID と有効・無効）。訳文が日本語のときだけ使う。
  */
-export const DEFAULTS = { theme: 'system', form: 'polite', source: '', mode: 'trans', model: '0.8B', idleMinutes: 10, debugLog: false, selectionIcon: true, pageFonts: DEFAULT_PAGE_FONTS };
+export const DEFAULTS = { theme: 'system', form: 'polite', source: '', target: DEFAULT_TARGET, mode: 'trans', model: '0.8B', idleMinutes: 10, debugLog: false, selectionIcon: true, pageFonts: DEFAULT_PAGE_FONTS };
 
 // 既定の同時実行数を変えるときはここだけを変える。保存済みのPCごとの値は引き継ぐ。
 // 2026-11-10、作者の判断で8本にした。自前ビルドの wllama では、8本が全体の時間も最初の訳も現行の4本より速い（docs/09_性能の仮説検証.md「最終の通算」）。
@@ -50,33 +52,15 @@ export const MODEL_LABELS = {
   '2B': '2B（訳が正確。約3倍遅い。初回に約1.8GBを取得）',
 };
 
-/**
- * 原文の言語の選択肢。PLaMo 3 Translate が扱う53言語から日本語を除いたもの。
- * 値は PFML3 の lang に書くコード。Androidアプリの Language.kt と同じ並び（よく使う4つを先に、残りは五十音順）。
- */
-export const LANGUAGES = [
-  ['ko', '韓国語'], ['en', '英語'], ['zh-hans', '中国語（簡体字）'], ['zh-hant', '中国語（繁体字）'],
-  ['az', 'アゼルバイジャン語'], ['ar', 'アラビア語'], ['hy', 'アルメニア語'], ['it', 'イタリア語'], ['id', 'インドネシア語'],
-  ['uz', 'ウズベク語'], ['ur', 'ウルドゥー語'], ['et', 'エストニア語'], ['nl', 'オランダ語'], ['kk', 'カザフ語'],
-  ['ca', 'カタルーニャ語'], ['km', 'クメール語'], ['gu', 'グジャラート語'], ['hr', 'クロアチア語'], ['jv', 'ジャワ語'],
-  ['ka', 'ジョージア語'], ['si', 'シンハラ語'], ['es', 'スペイン語'], ['sk', 'スロバキア語'], ['sl', 'スロベニア語'],
-  ['sw', 'スワヒリ語'], ['ceb', 'セブアノ語'], ['sr', 'セルビア語'], ['th', 'タイ語'], ['tl', 'タガログ語'], ['ta', 'タミル語'],
-  ['te', 'テルグ語'], ['de', 'ドイツ語'], ['ne', 'ネパール語'], ['hu', 'ハンガリー語'], ['eu', 'バスク語'], ['pa', 'パンジャブ語'],
-  ['hi', 'ヒンディー語'], ['my', 'ビルマ語'], ['fr', 'フランス語'], ['bg', 'ブルガリア語'], ['he', 'ヘブライ語'],
-  ['vi', 'ベトナム語'], ['fa', 'ペルシア語'], ['be', 'ベラルーシ語'], ['bn', 'ベンガル語'], ['pl', 'ポーランド語'],
-  ['mr', 'マラーティー語'], ['ml', 'マラヤーラム語'], ['ms', 'マレー語'], ['lv', 'ラトビア語'], ['lt', 'リトアニア語'], ['ru', 'ロシア語'],
-];
-
-/** 原文の言語の選択（select 要素）に、自動と52言語を入れる。 */
+/** 原文の言語の選択（select 要素）に、自動と52言語（日本語を除く）を入れる。 */
 export function fillLanguages(select, autoLabel = '自動（段落ごとにモデルが判定する）') {
   select.append(new Option(autoLabel, ''));
   for (const [code, label] of LANGUAGES) select.append(new Option(label, code));
 }
 
-/** 訳文の言語の選択（select 要素）に、日本語と52言語を入れる（テキスト翻訳。ページの翻訳は日本語へ訳す）。 */
-export function fillTargets(select) {
-  select.append(new Option('日本語', 'ja'));
-  for (const [code, label] of LANGUAGES) select.append(new Option(label, code));
+/** 訳文の言語の選択（select 要素）に言語を入れる。list を渡すとその言語だけ（PDF の訳文に選べる言語など）。 */
+export function fillTargets(select, list = TARGETS) {
+  for (const [code, label] of list) select.append(new Option(label, code));
 }
 
 /** モデルの状態を短い文にする（ボタンのメニュー・設定画面で使う）。 */

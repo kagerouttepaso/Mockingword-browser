@@ -1,10 +1,10 @@
 // PDF翻訳のページの Worker。PDFium・harfbuzz・pdf-lib の重い処理（段落の読み取り、ページの書き込み、保存）を画面の外で行い、
 // 数百ページの PDF でも画面の操作を止めない。翻訳は Worker から頼めない（chrome.* が無い）ので、画面に頼んで結果を受け取る。
 //
-// 画面 → Worker：{ type: 'open', bytes }・{ type: 'start', parallel }（中止した後は続きから）・{ type: 'stop' }・{ type: 'focus', page }・
+// 画面 → Worker：{ type: 'open', bytes, target }・{ type: 'start', parallel }（中止した後は続きから）・{ type: 'stop' }・{ type: 'focus', page }・
 //   { type: 'partial', id, lines }・{ type: 'translated', id, results | error }・{ type: 'save' }
 // Worker → 画面：{ type: 'opened', paragraphs }・{ type: 'translate', id, texts }・{ type: 'status', list, status }・
-//   { type: 'preview', list }・{ type: 'fonts' }・{ type: 'version', bytes, pages }・{ type: 'titles', entries }・{ type: 'stage', stage, done, total }・
+//   { type: 'preview', list }・{ type: 'fonts', target }・{ type: 'version', bytes, pages }・{ type: 'titles', entries }・{ type: 'stage', stage, done, total }・
 //   { type: 'done', stats }・{ type: 'saved', result }・{ type: 'error', during, message }
 import { openPdfJob } from './translate.js';
 
@@ -53,8 +53,9 @@ onmessage = async ({ data: m }) => {
   try {
     if (m.type === 'open') {
       job = await openPdfJob(m.bytes, {
+        target: m.target,
         onFontProgress: (done, total) => postMessage({ type: 'stage', stage: 'font', done, total }),
-        onFontsReady: () => postMessage({ type: 'fonts' }),
+        onFontsReady: () => postMessage({ type: 'fonts', target: m.target }),
       });
       postMessage({ type: 'opened', paragraphs: job.paras.filter((p) => !p.skip).length });
     } else if (m.type === 'start') start(m.parallel);

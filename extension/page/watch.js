@@ -12,8 +12,9 @@ chrome.storage.onChanged.addListener((c,area)=>{if(area==='sync'&&c.theme)applyM
 // 1. ページを読み込んだことをService Workerへ知らせる（同じサイト内で移ったページも続けて訳すため。ホスト名と文書の種類だけ。
 //    種類は、PDF のように内蔵ビューアで表示する文書で右クリックのメニューを絞るため）。
 // 2. 文章を選んだら、選択範囲の近くに「訳」アイコンを出す（押すと選択範囲の訳を吹き出しで出す）。
-// manifest の content_scripts で入れる通常のスクリプトなので import できない。メッセージの名前（'page-loaded'・'selection-icon'）と
-// 選択の判定は shared/messages.js・shared/text.js の worthSelection と同じものを直接書いている。
+// manifest の content_scripts で入れる通常のスクリプトなので静的な import はできない。メッセージの名前（'page-loaded'・'selection-icon'）は
+// shared/messages.js と同じものを直接書いている。選択の判定（shared/text.js の worthSelection）と言語の名前（shared/languages.js）は、
+// 初めて文章を選んだときに動的な import で読む（どちらも web_accessible_resources に入れてある。page/loader.js と同じ読み方）。
 /** 拡張機能へ知らせる。拡張機能を再読み込みした後の古いタブでは接続が切れており、その場で例外になるので黙って止める。 */
 function tell(message) {
   if (!chrome.runtime?.id) return;
@@ -35,14 +36,27 @@ if (window.top === window) {
 // 押したときだけ選択した文をService Workerへ送る（選んだだけでは送らない）。設定の「選択したときにアイコンを出す」で切り替える。
 (() => {
   let enabled = true;
+  /** 訳文の言語（設定の target）。もうこの言語で書かれた選択にはアイコンを出さない。 */
+  let target = 'ja';
   try {
-    chrome.storage.sync.get({ selectionIcon: true }).then((s) => (enabled = !!s.selectionIcon)).catch(() => {});
+    chrome.storage.sync.get({ selectionIcon: true, target: 'ja' }).then((s) => {
+      enabled = !!s.selectionIcon;
+      target = s.target;
+    }).catch(() => {});
     chrome.storage.onChanged.addListener((c, area) => {
       if (area === 'sync' && c.selectionIcon) enabled = !!c.selectionIcon.newValue;
+      if (area === 'sync' && c.target) target = c.target.newValue;
     });
   } catch {
     // 接続が切れた後に読み込まれた場合
   }
+
+  /** 選択の判定と言語の名前（正本のモジュール）。初めて文章を選んだときに読む。 */
+  let rules = null;
+  const loadRules = () => (rules ??= Promise.all([
+    import(chrome.runtime.getURL('shared/text.js')),
+    import(chrome.runtime.getURL('shared/languages.js')),
+  ]).then(([text, languages]) => ({ worthSelection: text.worthSelection, languageLabel: languages.languageLabel })));
 
   let host = null;
   let button = null;
@@ -70,7 +84,7 @@ ${globalThis.__mockingwordThemeCss}
         button:hover { border-color: var(--mw-primary); }
         img { width: 30px; height: 30px; display:block; }
       </style>
-      <button title="選択範囲を日本語に訳す（Mockingword）" aria-label="選択範囲を日本語に訳す"><img src="${chrome.runtime.getURL('icons/icon32.png')}" alt=""></button>`;
+      <button><img src="${chrome.runtime.getURL('icons/icon32.png')}" alt=""></button>`;
     button = root.querySelector('button');
     // 押しても選択が外れないよう、mousedown の既定の動きを止める。
     button.addEventListener('mousedown', (e) => {
@@ -91,11 +105,6 @@ ${globalThis.__mockingwordThemeCss}
     button?.classList.remove('show');
   }
 
-  /** 訳す価値のある選択か（shared/text.js の worthSelection と同じ）。日本語（かな）を含むもの・文字の無いもの・長すぎるものは出さない。 */
-  function worth(s) {
-    return s.length >= 2 && s.length <= 5000 && /\p{L}/u.test(s) && !/[぀-ヿ]/.test(s);
-  }
-
   /** 入力欄・編集できる場所・拡張機能自身の吹き出しやバーの中の選択には出さない。 */
   function insideIgnored(node) {
     const el = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
@@ -106,16 +115,22 @@ ${globalThis.__mockingwordThemeCss}
 
   function showSoon() {
     // 選択が確定してから見る（mouseup の直後はまだ選択が変わることがある）。
-    setTimeout(() => {
+    setTimeout(async () => {
       if (!enabled || !chrome.runtime?.id) return hide();
       const sel = window.getSelection();
-      const s = sel?.toString().trim() ?? '';
-      if (!sel || sel.isCollapsed || !worth(s) || insideIgnored(sel.anchorNode) || insideIgnored(sel.focusNode)) return hide();
+      if (!sel || sel.isCollapsed || !sel.toString().trim()) return hide();
+      const { worthSelection, languageLabel } = await loadRules().catch(() => ({}));
+      // 訳す価値のある選択か。もう訳文の言語で書かれたもの・文字の無いもの・長すぎるものには出さない。
+      const s = sel.toString().trim();
+      if (!worthSelection || sel.isCollapsed || !worthSelection(s, target) || insideIgnored(sel.anchorNode) || insideIgnored(sel.focusNode)) return hide();
       const rects = sel.getRangeAt(0).getClientRects();
       const last = rects[rects.length - 1];
       if (!last) return hide();
       text = s;
       if (!host) create();
+      const title = `選択範囲を${languageLabel(target)}に訳す`;
+      button.title = `${title}（Mockingword）`;
+      button.setAttribute('aria-label', title);
       // 選択範囲の最後の行の右下。画面からはみ出さないようにする。
       const x = Math.min(Math.max(4, last.right + 4), window.innerWidth - 34);
       const y = Math.min(Math.max(4, last.bottom + 4), window.innerHeight - 34);

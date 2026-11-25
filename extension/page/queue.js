@@ -121,7 +121,7 @@ export async function enqueue(paras) {
   }
   if (misses.length) {
     const generation = state.generation;
-    const r = await send({ type: MSG.CACHE_LOOKUP, texts: misses.map((p) => p.text) }).catch(() => null);
+    const r = await send({ type: MSG.CACHE_LOOKUP, texts: misses.map((p) => p.text), target: state.target }).catch(() => null);
     if (generation !== state.generation) return; // 待つ間に訳し直し・翻訳の終了があった
     let hits = 0;
     misses.forEach((para, i) => {
@@ -182,7 +182,7 @@ async function runChunk(chunk, generation) {
   trace('送信', { id, lines: texts.length, chars: texts.join('').length, screen, texts: texts.map((s) => short(s)), inflight: state.chunks.size, pending: state.pending.size });
   let response;
   try {
-    response = await send({ type: MSG.TRANSLATE_BATCH, texts, id });
+    response = await send({ type: MSG.TRANSLATE_BATCH, texts, id, target: state.target });
   } catch (e) {
     response = { ok: false, error: e.message };
   } finally {

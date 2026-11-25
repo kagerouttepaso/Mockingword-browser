@@ -4,31 +4,44 @@
 // - ツールバーのボタンの右クリック：テキスト翻訳を開く／モデルを解放する
 // 訳文・原文・対訳の切り替えは、訳しているページの上部のバーで行う。
 //
-// 内蔵ビューアで表示している文書（PDF など）では、ページ側の部品を差し込めない。そこでは「選択範囲を日本語に訳す」だけを出し
+// 項目の名前には設定の訳文の言語を入れる（「選択範囲を英語に訳す」）。設定を変えたら作り直す。
+//
+// 内蔵ビューアで表示している文書（PDF など）では、ページ側の部品を差し込めない。そこでは「選択範囲を…に訳す」だけを出し
 // （1項目なので拡張機能の名前の下にまとめず、メニューの1段目に出る。2026-11-16、作者の希望）、選んだ文章をテキスト翻訳で訳す。
 // メニューの出し分けはタブごとに変えられないので、前面のタブが変わるたびに項目を作り直す（fitMenus）。
 // visible: false で隠すだけでは、ブラウザーが隠した項目も数えて拡張機能の名前の下にまとめる（2026-11-16、Brave で作者が確認）ので、取り除く。
 
 import { MSG } from '../shared/messages.js';
 import { unload } from '../core/engine.js';
+import { languageLabel, pdfFontOf } from '../shared/languages.js';
 import { settings } from './config.js';
 import { isPdf, isViewer, openPdfPage, openTextPage, sendToPage } from './pages.js';
 
+/**
+ * 項目の名前に入れる訳文の言語。Service Workerは止まるたびに変数を失うので、項目を作るたびに設定から読む。
+ * PDF は、PDF に書けない言語なら PDF翻訳のページの既定（日本語）で訳す。
+ */
+async function labels() {
+  const { target } = await settings();
+  return { label: languageLabel(target), pdfLabel: languageLabel(pdfFontOf(target) ? target : 'ja') };
+}
+
 /** ページ側の部品が要る項目。内蔵ビューアの文書では取り除く。 */
-const PAGE_ONLY = [
-  { id: 'selected-paragraphs', title: '選択した段落を日本語に訳す', contexts: ['selection'] },
-  { id: 'page', title: 'このページを日本語に訳す', contexts: ['page'] },
+const pageOnly = ({ label }) => [
+  { id: 'selected-paragraphs', title: `選択した段落を${label}に訳す`, contexts: ['selection'] },
+  { id: 'page', title: `このページを${label}に訳す`, contexts: ['page'] },
 ];
 
 /** 内蔵ビューアで PDF を表示しているときだけの項目。範囲を選ばずに右クリックすると、PDF翻訳のページで開き直す（docs/12_PDFの翻訳.md）。 */
-const PDF_ONLY = [{ id: 'pdf', title: 'このPDFを日本語に訳す', contexts: ['page'] }];
+const pdfOnly = ({ pdfLabel }) => [{ id: 'pdf', title: `このPDFを${pdfLabel}に訳す`, contexts: ['page'] }];
 
 /** 項目を作る。同じ id がもうあれば何もしない（create はエラーを lastError で返すので、読んで捨てる）。 */
 const create = (item) => new Promise((resolve) => chrome.contextMenus.create(item, () => resolve(void chrome.runtime.lastError)));
 
 export async function buildMenus() {
+  const { label } = await labels();
   await chrome.contextMenus.removeAll();
-  await create({ id: 'selection', title: '選択範囲を日本語に訳す', contexts: ['selection'] });
+  await create({ id: 'selection', title: `選択範囲を${label}に訳す`, contexts: ['selection'] });
   await create({ id: 'open-text', title: 'テキスト翻訳を開く', contexts: ['action'] });
   await create({ id: 'open-pdf', title: 'PDFファイルを開いて訳す', contexts: ['action'] });
   await create({ id: 'unload', title: 'モデルを解放してメモリーを空ける', contexts: ['action'] });
@@ -39,11 +52,17 @@ export async function buildMenus() {
 /** 前面のタブの文書に合わせて、ページ側の部品が要る項目を作る・取り除く。 */
 export async function fitMenus(tabId) {
   const remove = (items) => Promise.all(items.map(({ id }) => chrome.contextMenus.remove(id).catch(() => {})));
-  if (await isViewer(tabId)) await remove(PAGE_ONLY);
-  else for (const item of PAGE_ONLY) await create(item);
-  if (await isPdf(tabId)) for (const item of PDF_ONLY) await create(item);
-  else await remove(PDF_ONLY);
+  const names = await labels();
+  if (await isViewer(tabId)) await remove(pageOnly(names));
+  else for (const item of pageOnly(names)) await create(item);
+  if (await isPdf(tabId)) for (const item of pdfOnly(names)) await create(item);
+  else await remove(pdfOnly(names));
 }
+
+// 訳文の言語を変えたら、項目の名前を作り直す。
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'sync' && changes.target) buildMenus();
+});
 
 chrome.tabs.onActivated.addListener(({ tabId }) => fitMenus(tabId));
 chrome.windows.onFocusChanged.addListener(async (windowId) => {
@@ -63,15 +82,15 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (!tab?.id) return;
   // 右クリックした場所が枠（iframe）の中なら、その枠へ差し込む。
   const frameId = info.frameId ?? 0;
-  const { mode } = await settings();
+  const { mode, target } = await settings();
   switch (id) {
     case 'selection':
       if (await isViewer(tab.id)) return toTextPage(info);
       return sendToPage(tab.id, { type: MSG.TRANSLATE_SELECTION, text: info.selectionText ?? '' }, frameId).catch(() => toTextPage(info));
     case 'selected-paragraphs':
-      return sendToPage(tab.id, { type: MSG.TRANSLATE_SELECTED_PARAGRAPHS, mode }, frameId).catch(() => toTextPage(info));
+      return sendToPage(tab.id, { type: MSG.TRANSLATE_SELECTED_PARAGRAPHS, mode, target }, frameId).catch(() => toTextPage(info));
     case 'page':
-      return sendToPage(tab.id, { type: MSG.START, mode });
+      return sendToPage(tab.id, { type: MSG.START, mode, target });
     case 'pdf':
       return openPdfPage(tab.id);
   }

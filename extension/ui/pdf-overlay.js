@@ -4,7 +4,8 @@
 // 層はページごとに1つの要素で、重ねた表示がある間は使い回す。座標はページに対する割合なので、拡大縮小しても描き直さない。
 // pdf.js はページを描き直すとき（拡大縮小・見えなくなったページの破棄・ページの差し替え）にページの要素の子を消すので、
 // ページの要素の子の変化を見て層をページへ置き直す。
-import { loadFonts, measureWithFonts, PDF_FONT_FAMILY } from '../pdf/fonts.js';
+import { pdfFontOf } from '../shared/languages.js';
+import { loadFonts, measureWithFonts } from '../pdf/fonts.js';
 import { planParagraph } from '../pdf/plan.js';
 
 function svg(tag, attrs) {
@@ -22,6 +23,7 @@ export function createOverlay(store, viewer) {
   };
   let family = 'sans-serif';
   let fontLoad;
+  let fontKind = null;
 
   function layerOf(pi) {
     let layer = layers.get(pi);
@@ -104,11 +106,19 @@ export function createOverlay(store, viewer) {
   }
 
   // 取得中は代替フォントで描き、Workerが取得し終えたらキャッシュから同じフォントを読んで描き直す。
-  return () => {
-    fontLoad ??= loadFonts().then((fonts) => {
+  // target は訳文の言語。画面で言語を変えて訳し直したら、その言語のフォントを読み直す。
+  return (target) => {
+    const kind = pdfFontOf(target);
+    if (!kind) return;
+    if (kind !== fontKind) {
+      fontKind = kind;
+      fontLoad = undefined;
+    }
+    fontLoad ??= loadFonts(kind).then((fonts) => {
+      if (kind !== fontKind) return; // 読む間に別の言語へ変えた
       measure = measureWithFonts(fonts);
-      family = PDF_FONT_FAMILY;
+      family = fonts.family;
       renderAll(store.state);
-    }).catch(() => { fontLoad = undefined; });
+    }).catch(() => { if (kind === fontKind) fontLoad = undefined; });
   };
 }

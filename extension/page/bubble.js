@@ -1,5 +1,6 @@
 // 選択範囲の訳を出す吹き出しと、右下の通知。設計は docs/05_選択範囲とテキスト翻訳.md。
 
+import { isRtl, langTag } from '../shared/languages.js';
 import { MSG } from '../shared/messages.js';
 import { barMessage, barShown, clearBarNotice } from './bar.js';
 import { notify, send } from './state.js';
@@ -42,6 +43,11 @@ export async function translateSelection(fallbackText) {
   const body = document.createElement('div');
   body.className = 'plamo-bubble-text';
   body.textContent = response?.ok ? response.text : response?.error ?? '翻訳に失敗しました。';
+  if (response?.ok && response.target) {
+    // 吹き出しの文言は日本語、訳文は設定の訳文の言語（Service Workerが返す）
+    body.lang = langTag(response.target);
+    if (isRtl(response.target)) body.dir = 'rtl';
+  }
   const foot = document.createElement('div');
   foot.className = 'plamo-bubble-foot';
   foot.textContent = response?.ok ? `PLaMo ${response.model}・${((performance.now() - t0) / 1000).toFixed(1)}秒　` : '';

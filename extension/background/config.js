@@ -1,6 +1,7 @@
 // 設定の読み出しと、更新したときの古い設定の移し替え。
 
 import { DEFAULTS, LOCAL_DEFAULTS, normalizeLocal } from '../shared/settings.js';
+import { normalizeTarget } from '../shared/languages.js';
 
 /**
  * 設定の版。上げると、更新したときに一度だけ古い値を移す。
@@ -10,10 +11,10 @@ import { DEFAULTS, LOCAL_DEFAULTS, normalizeLocal } from '../shared/settings.js'
 const SETTINGS_VERSION = 4;
 const OLD_MODELS = { 'local-0.8B': '0.8B', 'local-2B': '2B', '2B': '0.8B', '0.8B': '0.8B' };
 
-/** 翻訳のたびに読む設定。同期する設定（sync）とPCごとの設定（local）を合わせる。source は空なら null（自動）。 */
+/** 翻訳のたびに読む設定。同期する設定（sync）とPCごとの設定（local）を合わせる。source は空なら null（自動）。target は一覧にある言語にそろえる。 */
 export async function settings() {
   const [s, l] = await Promise.all([chrome.storage.sync.get(DEFAULTS), chrome.storage.local.get(LOCAL_DEFAULTS)]);
-  return { ...s, ...normalizeLocal(l), source: s.source || null, idleMinutes: Number(s.idleMinutes) };
+  return { ...s, ...normalizeLocal(l), source: s.source || null, target: normalizeTarget(s.target), idleMinutes: Number(s.idleMinutes) };
 }
 
 /** 入れたとき・更新したとき：古い設定を移す。 */

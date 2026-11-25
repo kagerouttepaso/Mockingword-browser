@@ -126,6 +126,13 @@
   </fieldset>
 
   <fieldset>
+    <legend>訳文の言語</legend>
+    <select name="target" id="target"></select>
+    <br><small>ページの翻訳と選択範囲の訳を、この言語へ訳します。PDF翻訳では、画面で選ぶ言語の最初の値になります。テキスト翻訳の言語は、そのページで選びます。
+      訳したページで言語を変えたときは、もう一度「このページを訳す」（Alt+T）を押すと、新しい言語で訳し直します。</small>
+  </fieldset>
+
+  <fieldset id="form-fieldset">
     <legend>訳文の文体</legend>
     <label><input type="radio" name="form" value="polite"> です・ます</label>
     <label><input type="radio" name="form" value="plain"> だ・である</label>
@@ -134,14 +141,14 @@
   <fieldset>
     <legend>ページの翻訳：原文の言語</legend>
     <select name="source" id="source"></select>
-    <br><small>既定の「自動」では、PLaMoが扱う52言語（日本語を除く）を段落ごとにモデルが判定して訳します。
+    <br><small>既定の「自動」では、PLaMoが扱う53言語を段落ごとにモデルが判定して訳します。訳文の言語で書かれた段落は訳しません。
       自動で訳が崩れるページだけ、言語を決めてください。テキスト翻訳の言語は、そのページで選びます。</small>
   </fieldset>
 
   <fieldset>
     <legend>選択範囲の翻訳</legend>
     <label><input type="checkbox" name="selectionIcon"> 文章を選んだら鳥のアイコンを出す（押すと選択範囲の訳を吹き出しで出す）</label>
-    <small>日本語（かな）を含む選択や、入力欄の中の選択には出しません。右クリックの「選択範囲を日本語に訳す」はこの設定によらず使えます。</small>
+    <small>訳文の言語で書かれた選択（日本語へ訳すなら、かなを含む選択）や、入力欄の中の選択には出しません。右クリックの「選択範囲を…に訳す」はこの設定によらず使えます。</small>
   </fieldset>
 
   <fieldset>
@@ -151,8 +158,9 @@
     <small>Alt+T（またはボタンのメニューの「このページを訳す」）をもう一度押すと原文に戻り、さらに押すとこの表示に戻ります。</small>
   </fieldset>
 
-  <fieldset>
+  <fieldset id="font-fieldset">
     <legend>ページの翻訳：訳文のフォント</legend>
+    <small id="font-ja-only" hidden>訳文の言語が日本語のときだけ使います。今の訳文の言語では、訳文は元のページのフォントで表示します。</small>
     <label class="inline"><input type="checkbox" id="pageFontsEnabled"> 元のページの雰囲気に合わせて日本語フォントを切り替える</label>
     <br><small>見出しの等幅フォントや本文のサンセリフ・明朝・丸ゴシックを自動判定し、英数字は元サイトのフォントを残したまま日本語だけ雰囲気の近い書体にします。選んだフォントは初回だけ jsDelivr（Fontsource）から取得してブラウザー内にキャッシュします。</small>
     <div id="fontRows" class="font-rows"></div>

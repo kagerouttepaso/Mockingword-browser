@@ -1,7 +1,7 @@
 // 段落を集める。ページの文字のノードを、見た目の段落（ブロック要素）ごとにまとめ、項目のグループ（group）を決める。
 // 要素の判定は page/dom.js、段落の中身の読み取りとマーカーは page/paragraph.js。設計は docs/04_ページの翻訳.md「段落の集め方」。
 
-import { OWN, blockOf, isInlineCode, skipElement } from './dom.js';
+import { OWN, blockOf, isBlockBreaker, isInlineCode, preservesNewlines, skipElement } from './dom.js';
 import { createPara } from './para.js';
 import { state } from './state.js';
 
@@ -54,31 +54,52 @@ export function groupOf(element, nodes = []) {
 
 /**
  * root の下の文字を、見た目の段落ごとにまとめる。まだ集めていない文字だけを集める。
+ * 同じブロック要素の中でも、間に別のブロックレベル要素（ul・h2 等）や、改行を保持する white-space 内の
+ * 改行文字（\n・\n\n）が挟まった場合は前後を別の段落に分け、改行文字自体は原文 DOM に残す。
  * 段落のフィールドは page/para.js。
  */
 export function collect(root) {
-  // 訳さない要素（SVG・コード・入力欄など）の中なら何もしない（root 自身は絞り込みを通らないため、先に祖先を見る）。
+  // 訳さない要素（SVG・コード・入力欄など）の中なら何もしない（root 自身は下の走査へ入る前に祖先を見る）。
   for (let el = root; el && el !== document.body; el = el.parentElement) if (skipElement(el) && !isInlineCode(el)) return [];
-  const groups = new Map(); // ブロック要素 → 文字のノードの並び
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      if (node.nodeType === Node.ELEMENT_NODE) {
-        if (isInlineCode(node)) return NodeFilter.FILTER_SKIP; // 中へ入る（マーカーで囲み、訳文に原文のまま戻す）
-        return skipElement(node) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_SKIP;
+  const segments = []; // [ブロック要素, 文字のノードの並び]
+  const active = new Map(); // ブロック要素 → 現在進行中の区間のノード配列
+  const closeAncestors = (el) => {
+    for (let a = el.parentElement; a; a = a.parentElement) active.delete(a);
+  };
+  const walk = (node) => {
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      if (node.matches(OWN)) return;
+      if (node !== root && isBlockBreaker(node)) closeAncestors(node);
+      if (skipElement(node) && !isInlineCode(node)) return;
+      for (let child = node.firstChild; child; child = child.nextSibling) walk(child);
+      return;
+    }
+    if (node.nodeType !== Node.TEXT_NODE) return;
+    const parent = node.parentElement;
+    if (!parent || state.seen.has(node)) return;
+    // white-space が改行を保持する要素では、テキスト内の \n（連続する空行を含む）でノードを分割し、
+    // 改行だけのノードを段落に含めず原文 DOM に残して前後の区間を区切る。
+    if (preservesNewlines(parent) && node.data.includes('\n')) {
+      const m = /^(\r?\n+|[^\r\n]+)/.exec(node.data);
+      if (m && m[0].length < node.data.length) node.splitText(m[0].length);
+      if (node.data.includes('\n')) {
+        active.delete(blockOf(parent));
+        return;
       }
-      if (state.seen.has(node) || !/\S/.test(node.data)) return NodeFilter.FILTER_SKIP;
-      return NodeFilter.FILTER_ACCEPT;
-    },
-  });
-  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    if (!node.parentElement || node.parentElement.closest(OWN)) continue;
-    const block = blockOf(node.parentElement);
-    let list = groups.get(block);
-    if (!list) groups.set(block, (list = []));
+    }
+    if (!/\S/.test(node.data)) return;
+    const block = blockOf(parent);
+    let list = active.get(block);
+    if (!list) {
+      list = [];
+      active.set(block, list);
+      segments.push([block, list]);
+    }
     list.push(node);
-  }
+  };
+  walk(root);
   const added = [];
-  for (const [element, nodes] of groups) {
+  for (const [element, nodes] of segments) {
     const para = createPara(element, nodes);
     if (para) added.push(para);
   }

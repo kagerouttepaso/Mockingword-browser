@@ -13,7 +13,10 @@ export const UI = '.plamo-tr, .plamo-ui, .plamo-ui-host';
 export const OWN = UI + ', [data-plamo-orig]';
 
 const displayCache = new WeakMap();
+const whiteSpaceCache = new WeakMap();
 const LIST_ENTRY = new Set(['LI', 'DT', 'DD']);
+/** 改行文字（\n）を空白に潰さず強制改行として表示する white-space の値。 */
+const PRESERVE_NEWLINE = new Set(['pre', 'pre-wrap', 'pre-line', 'break-spaces']);
 
 /** 段落の区切りにならないインライン要素か。一覧の項目は横並びでも独立して扱う。 */
 export function isInline(el) {
@@ -24,6 +27,27 @@ export function isInline(el) {
     displayCache.set(el, d);
   }
   return d === 'inline' || d === 'contents';
+}
+
+/** 行を折って前後の段落を分断するブロックレベル要素か（inline-block 等の行内要素は含まない）。 */
+export function isBlockBreaker(el) {
+  if (LIST_ENTRY.has(el.tagName)) return true;
+  let d = displayCache.get(el);
+  if (d === undefined) {
+    d = getComputedStyle(el).display;
+    displayCache.set(el, d);
+  }
+  return d !== 'contents' && !d.startsWith('inline');
+}
+
+/** テキストノード内の改行文字（\n）を改行として保持する要素か。 */
+export function preservesNewlines(el) {
+  let ws = whiteSpaceCache.get(el);
+  if (ws === undefined) {
+    ws = getComputedStyle(el).whiteSpace;
+    whiteSpaceCache.set(el, ws);
+  }
+  return PRESERVE_NEWLINE.has(ws);
 }
 
 /**

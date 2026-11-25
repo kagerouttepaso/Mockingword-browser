@@ -99,11 +99,13 @@ function translationSpan(para, last) {
     span.lang = langTag(state.target);
     if (isRtl(state.target)) span.dir = 'rtl';
     span.setAttribute('translate', 'no');
-    // 置き場所：段落の文字をすべて含むいちばん内側の要素（markup の root。太字だけの行・見出しのリンクならその中）の直下で、
-    // 最後の文字の後ろ。太字の見出しは太字のまま、見出しのリンクは押せるままになる。
+    // 置き場所：段落の文字をすべて含むいちばん内側の要素（markup の root。太字だけの行・見出しのリンクならその中）の中で、
+    // 最後の文字の後ろ。hide で丸ごと隠される要素（太字やリンク等）の外へだけ上がり、改行や他段落をまたぐ要素の内側では
+    // その区間の末尾の直後に置く。
     const root = para.root?.isConnected && para.root.contains(last) ? para.root : para.element;
-    let anchor = last.parentNode; // 包んだ span
-    while (anchor.parentNode && anchor.parentNode !== root) anchor = anchor.parentNode;
+    const hideSet = new Set(para.hide ?? []);
+    let anchor = last.parentNode; // 包んだ mw-orig
+    while (anchor.parentNode && anchor.parentNode !== root && hideSet.has(anchor.parentNode)) anchor = anchor.parentNode;
     anchor.parentNode.insertBefore(span, anchor.nextSibling);
     para.trSpan = span;
     // 訳文のフォントの設定は日本語のフォント（shared/fonts.js）なので、日本語へ訳すときだけ当てる。

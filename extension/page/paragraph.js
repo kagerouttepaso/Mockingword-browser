@@ -3,7 +3,7 @@
 // （docs/11_設計方針.md「段落のデータの流れ」。要素の種類ごとの例外をほかの場所に足さない）。
 
 import { encode } from '../shared/markup.js';
-import { UI, isInline, isInlineCode, skipElement } from './dom.js';
+import { UI, isInline, isInlineCode, preservesNewlines, skipElement } from './dom.js';
 
 const isLink = (el) => el.tagName === 'A' && el.hasAttribute('href');
 
@@ -93,14 +93,26 @@ export function readParagraph(block, nodes) {
   const marks = [];
   const hide = [];
   const mark = (kind, el) => marks.push({ kind, el });
+  const first = nodes[0];
+  const last = nodes.at(-1);
+  // 同じブロック内に複数の段落（区間）が並ぶとき、この段落の範囲（first〜last）の外にある要素や改行を拾わない。
+  let phase = 0; // 0: first の前、1: first〜last の間、2: last の後
   /** parent の中身を読む。中身がすべてこの段落のもの（隠してよい）なら true。 */
   const walk = (parent) => {
     let owned = true;
     for (const child of parent.childNodes) {
       if (child.nodeType === Node.TEXT_NODE) {
-        if (set.has(child)) tokens.push({ type: 'text', text: child.data });
-        else if (/\S/.test(child.data)) owned = false; // ほかの段落の文字
-        else tokens.push({ type: 'space' }); // 落とすと「featuresRead only」のように語がつながる（2026-11-11）
+        if (set.has(child)) {
+          if (child === first) phase = 1;
+          tokens.push({ type: 'text', text: child.data });
+          if (child === last) phase = 2;
+        } else if (/\S/.test(child.data)) {
+          owned = false; // ほかの段落の文字
+        } else if (preservesNewlines(parent) && child.data.includes('\n')) {
+          owned = false; // 原文 DOM に残す改行・空行。これを含む要素は hide で隠さない
+        } else if (phase === 1) {
+          tokens.push({ type: 'space' }); // 落とすと「featuresRead only」のように語がつながる（2026-11-11）
+        }
         continue;
       }
       if (child.nodeType !== Node.ELEMENT_NODE || child.matches(UI)) continue;
@@ -111,11 +123,21 @@ export function readParagraph(block, nodes) {
       const role = roleOf(child, parent, holders);
       if (role === 'foreign') owned = false;
       else if (role === 'code') {
-        tokens.push({ type: 'code', id: mark('c', child), text: child.textContent });
-        hide.push(child);
+        if (holders.any.has(child) || phase === 1) {
+          if (child.contains(first)) phase = 1;
+          tokens.push({ type: 'code', id: mark('c', child), text: child.textContent });
+          hide.push(child);
+          if (child.contains(last)) phase = 2;
+        } else {
+          owned = false;
+        }
       } else if (role === 'void') {
-        tokens.push({ type: 'void', id: mark('v', child), br: child.tagName === 'BR' });
-        hide.push(child);
+        if (phase === 1) {
+          tokens.push({ type: 'void', id: mark('v', child), br: child.tagName === 'BR' });
+          hide.push(child);
+        } else {
+          owned = false;
+        }
       } else if (role === 'wrap' || role === 'pass') {
         const id = role === 'wrap' ? mark('a', child) : 0;
         if (id) tokens.push({ type: 'open', id });

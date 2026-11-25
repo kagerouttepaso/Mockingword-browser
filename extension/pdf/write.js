@@ -114,7 +114,7 @@ function writePage(X, page, all, mine, handles, measure, stats) {
       stats.kept++;
     }
   }
-  for (const { h } of handleOf.values()) {
+  for (const h of [...[...handleOf.values()].map(({ h }) => h), ...textDecorations(X, page, mine)]) {
     P.FPDFPage_RemoveObject(page, h);
     P.FPDFPageObj_Destroy(h);
   }
@@ -148,6 +148,40 @@ function writePage(X, page, all, mine, handles, measure, stats) {
     stats.translated++;
   }
   moveLinks(X, page, mine, linkRects, stats);
+}
+
+const PATH_OBJECT = 2; // FPDF_PAGEOBJ_PATH
+
+/**
+ * 訳す段落の文字の飾り（インラインコードの背景・蛍光ペンなど、文字の行の上に塗った図形）。原文の文字と一緒に消す。
+ * 残すと、訳文は別の位置に組むので、飾りだけが原文の位置に残り、訳文の行の途中や行末に灰色の帯が見えた（2026-11-25、作者の報告）。
+ * 飾りと見なすのは、ページの直下の塗りのある図形で、高さが文字の大きさの1.5倍以下、縦の中心が訳す文字の行の中、横の中心がその行の
+ * 訳す文字の範囲の中にあるもの。表の罫線（細い四角で描くPDFもある）は行の外か文字の範囲の外に、セルの塗りは行より高いので残る。
+ * 埋め込みのフォームの中の図形は消せない（PDFium の制約。その段落は背景色で覆う）。
+ */
+function textDecorations(X, page, paras) {
+  const { P, tmp, f } = X;
+  const lines = [];
+  for (const p of paras) {
+    for (const c of p.chars) {
+      if (!c.tr) continue;
+      const line = lines.find((l) => Math.abs(l.oy - c.oy) < 0.3 * p.size);
+      if (line) Object.assign(line, { l: Math.min(line.l, c.l), r: Math.max(line.r, c.r), b: Math.min(line.b, c.b), t: Math.max(line.t, c.t) });
+      else lines.push({ oy: c.oy, size: p.size, l: c.l, r: c.r, b: c.b, t: c.t });
+    }
+  }
+  const found = [];
+  for (let i = 0, n = P.FPDFPage_CountObjects(page); i < n; i++) {
+    const o = P.FPDFPage_GetObject(page, i);
+    if (P.FPDFPageObj_GetType(o) !== PATH_OBJECT) continue;
+    P.FPDFPath_GetDrawMode(o, tmp, tmp + 4);
+    if (!X.u32(0)) continue; // 塗りの無い線（罫線・枠）は飾りにしない
+    P.FPDFPageObj_GetBounds(o, tmp, tmp + 4, tmp + 8, tmp + 12);
+    const [l, b, r, t] = [f(0), f(1), f(2), f(3)];
+    const cx = (l + r) / 2, cy = (b + t) / 2;
+    if (lines.some((line) => t - b <= 1.5 * line.size && cy >= line.b && cy <= line.t && cx >= line.l && cx <= line.r)) found.push(o);
+  }
+  return found;
 }
 
 const FPDF_ANNOT_LINK = 2;

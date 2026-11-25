@@ -1,6 +1,7 @@
 // PDF の翻訳の流れ（PDF翻訳のページの Worker で動く。pdf/worker.js）：開く → 段落を読む → 訳す（見ているページから）→
 // ページの段落がそろったらそのページを訳したPDFへ書く → 書いたページを画面へ渡す（版）。保存するときは同じ訳したPDFを仕上げる。
 // 生成中の訳文は画面の途中表示へ渡す。訳す処理は呼び出し側が渡す（docs/12_PDFの翻訳.md「データの流れ」）。
+import { pdfFontOf } from '../shared/languages.js';
 import { decode, previewLine, remainingSource } from '../shared/markup.js';
 import { addBackgrounds } from './background.js';
 import { extractParagraphs } from './extract.js';
@@ -23,21 +24,24 @@ const SAVE_SHARE = 4;
 /**
  * PDF を開いて訳す準備をする。返す値：
  *   paras（段落。pdf/extract.js。p.id は段落の番号）・run(...)・save()・close()
- * onFontProgress(読んだバイト数, 全体) でフォントの取得の進み具合を知らせる。
+ * target は訳文の言語のコード（PDF に書けるもの。shared/languages.js の PDF_TARGETS）。どの段落を訳すかと訳文のフォントが決まるので、
+ * 言語を変えるときは開き直す。onFontProgress(読んだバイト数, 全体) でフォントの取得の進み具合を知らせる。
  */
-export async function openPdfJob(bytes, { onFontProgress, onFontsReady } = {}) {
+export async function openPdfJob(bytes, { target = 'ja', onFontProgress, onFontsReady } = {}) {
+  const fontKind = pdfFontOf(target);
+  if (!fontKind) throw new Error('この言語の訳文はPDFに書けません');
   const doc = await openPdf(bytes);
   const t0 = performance.now();
   let paras;
   try {
-    paras = extractParagraphs(doc);
+    paras = extractParagraphs(doc, target);
   } catch (e) {
     doc.close();
     throw e;
   }
   paras.forEach((p, i) => { p.id = i; });
   const readMs = Math.round(performance.now() - t0);
-  const fonts = loadFonts(onFontProgress);
+  const fonts = loadFonts(fontKind, onFontProgress);
   fonts.then(() => onFontsReady?.(), () => {}); // 失敗は使う側の await で受ける
   const pages = paragraphsByPage(paras);
   const queue = createPdfQueue(pages);

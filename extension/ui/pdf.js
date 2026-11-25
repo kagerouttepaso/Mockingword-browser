@@ -3,7 +3,8 @@
 // ページの段落がそろうたびにそのページを書いて版を送る。画面はその版のページに差し替える（ui/pdf-pages.js）ので、
 // 生成中に読める訳文はページの上に重ねる（ui/pdf-overlay.js）。保存するのは Worker が書いた PDF。流れは docs/12_PDFの翻訳.md。
 import { MSG } from '../shared/messages.js';
-import { describeStatus, LOCAL_DEFAULTS, normalizeLocal } from '../shared/settings.js';
+import { pdfFontOf, PDF_TARGETS } from '../shared/languages.js';
+import { describeStatus, fillTargets, LOCAL_DEFAULTS, normalizeLocal } from '../shared/settings.js';
 import { createPdfBatchRequests } from './pdf-batches.js';
 import { createOutline } from './pdf-outline.js';
 import { createOverlay } from './pdf-overlay.js';
@@ -23,7 +24,7 @@ const container = $('viewerContainer');
 let fileName = 'document.pdf';
 let running = false;
 
-const STAGES = { read: 'PDFを読んでいます', font: '日本語フォントを用意しています', translate: '訳しています', save: '保存するPDFを仕上げています' };
+const STAGES = { read: 'PDFを読んでいます', font: '訳文のフォントを用意しています', translate: '訳しています', save: '保存するPDFを仕上げています' };
 
 function setProgress(done, total) {
   progress.hidden = total == null;
@@ -46,6 +47,16 @@ function watchModel(on) {
 }
 
 const batches = createPdfBatchRequests((options) => chrome.runtime.connect(options));
+
+// ---------------- 訳文の言語 ----------------
+// 選べるのは PDF に書ける言語（shared/languages.js の PDF_TARGETS）。最初の値は設定の訳文の言語（ページの翻訳と同じ）で、
+// PDF に書けない言語なら日本語。この画面で変えても設定は変えない（docs/12_PDFの翻訳.md「訳文の言語」）。
+const targetSelect = $('target');
+fillTargets(targetSelect, PDF_TARGETS);
+const { target: savedTarget } = await chrome.storage.sync.get({ target: 'ja' }).catch(() => ({}));
+targetSelect.value = pdfFontOf(savedTarget) ? savedTarget : 'ja';
+/** 訳している（訳した）言語。Worker を作るときに選択から決め、訳し直すまで変えない。 */
+let jobTarget = targetSelect.value;
 
 // ---------------- pdf.js のビューア ----------------
 
@@ -229,7 +240,7 @@ function saveFile(r) {
   const url = URL.createObjectURL(new Blob([r.bytes], { type: 'application/pdf' }));
   const a = document.createElement('a');
   a.href = url;
-  a.download = fileName.replace(/\.pdf$/i, '') + '_ja.pdf';
+  a.download = fileName.replace(/\.pdf$/i, '') + `_${jobTarget}.pdf`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 60000);
   $('save').disabled = false;
@@ -243,7 +254,7 @@ function onWorkerMessage({ currentTarget: w, data: m }) {
   if (m.type === 'opened') startWorker(w);
   else if (m.type === 'translate') {
     if (!running || stopping) return;
-    batches.translate(m.texts, (lines) => {
+    batches.translate(m.texts, jobTarget, (lines) => {
       if (w === worker && running && !stopping) w.postMessage({ type: 'partial', id: m.id, lines });
     }).then(
       (results) => { if (w === worker && !stopping) w.postMessage({ type: 'translated', id: m.id, results }); },
@@ -258,7 +269,7 @@ function onWorkerMessage({ currentTarget: w, data: m }) {
     watchModel(m.stage === 'translate' && !m.done);
   } else if (m.type === 'status') { if (!stopping || !m.status) store.setMarks(m.list, m.status); }
   else if (m.type === 'preview') { if (running && !stopping) store.setPreview(m.list); }
-  else if (m.type === 'fonts') loadOverlayFonts();
+  else if (m.type === 'fonts') loadOverlayFonts(m.target);
   else if (m.type === 'version') receiveVersion(m.bytes, m.pages);
   else if (m.type === 'titles') store.setTitles(m.entries);
   else if (m.type === 'done') {
@@ -307,12 +318,13 @@ function start() {
   store.begin();
   status.textContent = STAGES.read;
   worker?.terminate();
+  jobTarget = targetSelect.value;
   worker = new Worker(new URL('../pdf/worker.js', import.meta.url), { type: 'module' });
   worker.onmessage = onWorkerMessage;
   worker.onerror = (e) => fail(e.message);
   worker.postMessage({ type: 'focus', page: Math.max(0, viewer.currentPageNumber - 1) });
   const bytes = current.bytes.slice();
-  worker.postMessage({ type: 'open', bytes }, [bytes.buffer]);
+  worker.postMessage({ type: 'open', bytes, target: jobTarget }, [bytes.buffer]);
 }
 eventBus.on('pagechanging', ({ pageNumber }) => worker?.postMessage({ type: 'focus', page: pageNumber - 1 }));
 
@@ -357,6 +369,15 @@ async function openFile(file) {
 }
 
 $('start').onclick = () => start();
+// 訳した後・訳している途中で訳文の言語を変えたら、今の翻訳を捨て、その言語で初めから訳し直す（訳したページは原文に戻る）。
+// 訳す段落（もう訳文の言語で書かれた段落は訳さない）と訳文のフォントが言語で変わるので、続きからではなく初めから訳す。
+targetSelect.onchange = () => {
+  if (!worker || targetSelect.value === jobTarget) return; // まだ訳していなければ、「翻訳を開始」を押したときに使う
+  dropWorker();
+  $('save').hidden = true;
+  $('start').textContent = '翻訳を開始';
+  start();
+};
 // 翻訳を中止する：頼んでいる翻訳を取り消し、Worker は書いたページまでで止める（訳したPDFは保存できる）
 $('stop').onclick = () => {
   if (!running || !worker) return;

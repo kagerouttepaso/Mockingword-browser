@@ -1,7 +1,8 @@
 // 壊れても普段の利用では気づけないまま訳文が欠ける・誤るものだけを確かめる（docs/06「試験」）。実行：node --test tools/unit.test.mjs
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { pageReadable, runaway, splitLong, untranslated } from '../extension/shared/text.js';
+import { pageReadable, runaway, splitLong, untranslated, worthSelection, worthTranslating } from '../extension/shared/text.js';
+import { layout } from '../extension/pdf/layout.js';
 import { classifyFontFamily, DEFAULT_PAGE_FONTS, fontFileSpec, normalizePageFonts, pickFontWeights } from '../extension/shared/fonts.js';
 import { translateBatch } from '../extension/core/translator.js';
 import { streamPartial } from '../extension/core/engine.js';
@@ -126,7 +127,7 @@ test('PDFの中止は未完了の全バッチを切断し、古い途中経過�
   const done = [];
   const options = {
     parallel: 3, focus: () => 0,
-    translate: (texts) => batches.translate(texts, (lines) => previews.push({ texts, lines })),
+    translate: (texts) => batches.translate(texts, 'ja', (lines) => previews.push({ texts, lines })),
     onResult(part, _results, pages) { done.push({ part, pages }); },
   };
   const controller = new AbortController();
@@ -351,6 +352,32 @@ test('untranslated：短い英字のバッジだけの行は、英語のまま�
   const sentence = 'Returns a <a1><c2>Bluetooth</c2></a1> object for the current document.';
   assert.equal(untranslated(sentence, sentence), true);
   assert.equal(untranslated('<a1>This value may not be changed by scripts</a1>', '<a1>This value may not be changed by scripts</a1>'), true, '長い文のバッジは訳し直す');
+});
+
+test('訳文の言語：もうその言語で書かれた文は訳さず、訳文にその言語の文字が無い行は訳し直す', () => {
+  // 日本語へ訳すとき：かなを含む文は訳さない。日本語以外へ訳すときは日本語の文も訳す
+  assert.equal(worthTranslating('これは日本語の文です'), false);
+  assert.equal(worthTranslating('これは日本語の文です', 'en'), true);
+  assert.equal(worthSelection('これは日本語の文です', 'ko'), true);
+  // 文字でその言語と決められるときだけ訳さない（ハングルは韓国語、ラテン文字は英語とは決められない）
+  assert.equal(worthTranslating('한국어 문장입니다', 'ko'), false);
+  assert.equal(worthTranslating('An English sentence.', 'en'), true);
+  // 中国語へ訳すとき、漢字だけの文は訳さないが、かなの混ざる日本語の文は訳す
+  assert.equal(worthTranslating('这是中文句子', 'zh-hans'), false);
+  assert.equal(worthTranslating('漢字とかなの文', 'zh-hans'), true);
+  // まとめ訳しで原文のまま返った行：訳文の言語の文字が無ければ訳し直す
+  assert.equal(untranslated('これはペンです', 'これはペンです', 'en'), true);
+  assert.equal(untranslated('これはペンです', 'This is a pen.', 'en'), false);
+  assert.equal(untranslated('This is a pen.', 'Это ручка.', 'ru'), false);
+  assert.equal(untranslated('This sentence was copied as it is.', 'This sentence was copied as it is!', 'ko'), true);
+});
+
+test('PDFの行分け：空白で語を区切る文字は語の途中で折り返さず、漢字・かなは1文字ずつ折り返す', () => {
+  const measure = (text) => [...text].length;
+  const lines = (text, width) => layout([{ text, bold: false }], width, 1, measure).map((line) => line.map((a) => a.s).join(''));
+  assert.deepEqual(lines('Привет мир, это тест', 12), ['Привет мир,', 'это тест']);
+  assert.deepEqual(lines('Xin chào thế giới', 9), ['Xin chào', 'thế giới']);
+  assert.deepEqual(lines('これは日本語です。', 4), ['これは日', '本語です。']);
 });
 
 test('pageReadable：HTML・XML・テキストの文書だけページ側の部品を使う。PDF・画像は内蔵ビューアの文書として扱う', () => {

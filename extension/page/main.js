@@ -1,6 +1,7 @@
 // ページ側の本体。Service Workerからの指示を受け、ページ全体・選択した段落の翻訳、表示の切り替え、翻訳の終了を行う。
 // page/loader.js が import する。設計は docs/04_ページの翻訳.md。
 
+import { languageLabel } from '../shared/languages.js';
 import { MSG } from '../shared/messages.js';
 import { initBar, removeBar, setBarDone, showBar, updateBar, barMessage } from './bar.js';
 import { clearNotice, notice, toast, translateSelection } from './bubble.js';
@@ -66,6 +67,19 @@ function stop() {
   report();
 }
 
+/**
+ * 訳文の言語を決める（Service Workerが指示に載せる設定の値）。訳した後に設定で言語を変えていたら、元のページに戻してから
+ * 新しい言語で訳し直す。どの段落を訳すか（もう訳文の言語で書かれた段落は訳さない）も言語で変わるので、集め直す。
+ */
+function useTarget(target = 'ja') {
+  if (target === state.target) return;
+  if (state.started || state.all.size) stop();
+  // このページの中のキャッシュ（原文 → 訳文）は言語を区別しないので、前の言語の訳を出さないように消す。
+  // Service Workerのキャッシュは鍵に言語を含むので、新しい言語の訳があればそこから出る。
+  state.cache.clear();
+  state.target = target;
+}
+
 /** モデルを切り替えたとき、訳した段落を新しいモデルで訳し直す。届くまでは前の訳を見せておく。 */
 function retranslate(model) {
   if (!state.started && state.all.size === 0) return;
@@ -102,7 +116,7 @@ function translateBlocks(blocks, mode, what) {
   const paras = blocks.flatMap((b) => collect(b));
   const known = paras.length === 0 && [...state.all].some((p) => blocks.some((b) => b.contains(p.element) || p.element.contains(b)));
   if (paras.length === 0 && !known) {
-    toast(`${what}には訳す文章がありません（日本語・コード・入力欄は訳しません）。`);
+    toast(`${what}には訳す文章がありません（${languageLabel(state.target)}の文・コード・入力欄は訳しません）。`);
     return;
   }
   showTranslation(mode);
@@ -131,7 +145,8 @@ initBar({ onMode: setMode, onWhole: () => start(state.lastShown), onClose: stop 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   switch (message.type) {
     case MSG.TOGGLE:
-      // 未翻訳なら訳す。訳した後は原文⇄（直前の）訳文を切り替える。
+      // 未翻訳なら訳す。訳した後は原文⇄（直前の）訳文を切り替える。訳文の言語を変えていたら、その言語で訳し直す。
+      useTarget(message.target);
       if (!state.started) start(message.mode);
       else {
         showBar();
@@ -140,6 +155,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       break;
     case MSG.START:
       if (!state.started && message.mode === 'orig') break;
+      useTarget(message.target);
       start(message.mode);
       break;
     case MSG.STOP:
@@ -155,6 +171,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       translateSelection(message.text);
       break;
     case MSG.TRANSLATE_SELECTED_PARAGRAPHS:
+      useTarget(message.target);
       translateSelectedParagraphs(message.mode);
       break;
     case MSG.SHOW_PARTIAL:

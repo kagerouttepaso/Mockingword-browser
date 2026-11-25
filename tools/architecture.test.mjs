@@ -20,7 +20,7 @@ const ALLOWED = {
   ui: ['ui', 'shared', 'pdf', 'vendor'],
 };
 /** DOM にも chrome にも触れない純粋な関数だけを置くモジュール（Node の単体試験で確かめられる形を保つ）。 */
-const PURE = ['shared/markup.js', 'shared/text.js', 'shared/prompt.js', 'shared/sentences.js', 'shared/fonts.js'];
+const PURE = ['shared/markup.js', 'shared/text.js', 'shared/prompt.js', 'shared/sentences.js', 'shared/fonts.js', 'shared/languages.js'];
 
 const sources = LAYERS.flatMap((layer) => fs.readdirSync(path.join(ROOT, layer)).filter((f) => f.endsWith('.js')).map((f) => `${layer}/${f}`));
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');

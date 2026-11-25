@@ -29,8 +29,9 @@ export async function pageAction(tabId, action) {
   if (await isPdf(tabId)) return openPdfPage(tabId);
   if (await isViewer(tabId)) return openTextPage();
   if (action === 'stop') return sendToPage(tabId, { type: MSG.STOP });
-  if (action === 'toggle') return sendToPage(tabId, { type: MSG.TOGGLE, mode: (await settings()).mode });
-  return sendToPage(tabId, { type: MSG.START, mode: action });
+  const { mode, target } = await settings();
+  if (action === 'toggle') return sendToPage(tabId, { type: MSG.TOGGLE, mode, target });
+  return sendToPage(tabId, { type: MSG.START, mode: action, target });
 }
 
 /** モデルを切り替える。開いているタブを訳していたら、新しいモデルで訳し直す（比べられるように）。 */
@@ -124,7 +125,7 @@ export async function onPageLoaded(tabId, frameId, host) {
     await chrome.storage.session.remove(autoKey(tabId)); // 別のサイトへ移ったら止める
     return;
   }
-  await sendToPage(tabId, { type: MSG.START, mode: auto.mode });
+  await sendToPage(tabId, { type: MSG.START, mode: auto.mode, target: (await settings()).target });
 }
 
 chrome.tabs.onRemoved.addListener((tabId) => chrome.storage.session.remove([autoKey(tabId), viewerKey(tabId)]));

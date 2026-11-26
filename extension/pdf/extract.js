@@ -6,7 +6,22 @@ import { encode } from '../shared/markup.js';
 
 const BOLD = /bold|black|heavy/i;
 const MONO = /mono|courier|typewriter|cmtt|consol/i;
-const isBold = (c) => c.weight >= 600 || BOLD.test(c.font);
+/** 太字でない書体の名前（Regular・Light など）。 */
+const NOT_BOLD = /^(regular|book|roman|normal|plain|light|thin|extralight|ultralight|medium|italic|oblique)/i;
+/**
+ * 太字か。フォント名の書体の部分（PostScript 名の「-」「,」の後ろ。NotoSansJP-Bold → Bold）に書体があればそれで決め、
+ * 無いときだけ PDFium の太さ（FPDFText_GetFontWeight）で決める。太さは FontDescriptor に FontWeight が無いと StemV から推し量った値で、
+ * 可変フォントの Noto Sans JP を埋め込んだ PDF では、Regular の和文が704・英数字が545・Bold が892になった。600 を境にすると本文の和文を
+ * 太字、英数字を太字でない要素と判定し、訳文がすべて太字になり、英数字ごとにマーカーが入って訳が崩れた（2026-11-25、作者の韓国語訳のPDF）。
+ */
+const isBold = (c) => {
+  const style = c.font.split(/[-,]/).slice(1).join('-');
+  if (BOLD.test(style)) return true;
+  if (NOT_BOLD.test(style)) return false;
+  return c.weight >= 600 || BOLD.test(c.font);
+};
+/** 行の継ぎ目に空白を入れない文字（漢字・かな・全角の記号）。日本語・中国語は行の継ぎ目に空白が無い。 */
+const NO_SPACE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\u3000-\u303f\uff00-\uffef]/u;
 /** 箇条書きの印（訳さずに残す）。 */
 const BULLET = /^([•–·◦▪])\s*/;
 /** 目次の点線（". . . ."）。見出しと分ける。 */
@@ -144,6 +159,22 @@ function segments(chars) {
     cur.chars.push(c);
     if (!sup) cur.size = Math.max(cur.size, c.size);
   }
+  // 文字の並びの順が描く位置の順と違う PDF では、同じ行の続きが後から出てきて別のセグメントになる（行末にぶら下げた「、」が
+  // ページの文字の最後に出てきて1つの段落になり、前後の文が別々に訳された。2026-11-25、作者の韓国語訳のPDF）。
+  // 同じ基線で、前に出たセグメントの最後の文字のすぐ後ろから始まるセグメントは、そのセグメントの続きにする。
+  const edge = (seg, pick) => pick.call(seg.chars, (c) => c.ch !== ' ');
+  for (let k = segs.length - 1; k > 0; k--) {
+    const s = segs[k];
+    const head = edge(s, Array.prototype.find);
+    const host = head && segs.slice(0, k - 1).find((o) => {
+      const tail = edge(o, Array.prototype.findLast);
+      return tail && Math.abs(o.y - s.y) < 0.4 * o.size && head.l >= tail.r - 0.5 * o.size && head.l - tail.r <= Math.max(o.size, s.size);
+    });
+    if (!host) continue;
+    host.chars.push(...s.chars);
+    host.size = Math.max(host.size, s.size);
+    segs.splice(k, 1);
+  }
   for (let k = 0; k < segs.length; k++) {
     const s = segs[k];
     const m = s.chars.map((c) => c.ch).join('').match(LEADER);
@@ -217,20 +248,28 @@ function pageParagraphs(X, pi, page, tp) {
     const prev = groups.at(-1);
     const last = prev?.segs.at(-1);
     const gap = last ? last.y - s.y : 0;
+    // 1行目だけ字下げした段落：1行目の次の行が、字下げの幅（文字3つまで）だけ左から始まり、1行目がその行より短くない。
+    // 字下げを見ないと、1行目だけが別の段落になり、文の途中で切れたまま訳された（2026-11-25、作者の韓国語訳のPDF）
+    const indent = prev && prev.segs.length === 1 && !prev.bullet ? prev.textX0 - s.x0 : 0;
+    const indented = indent >= 3 && indent <= 3 * s.size && last.x1 >= s.x1 - s.size;
     const joinable = prev && !s.bullet && sameLine(s).length === 0
       && Math.abs(s.size - last.size) < 0.6 && s.bold === last.bold && gap > 0.8 * s.size && gap < 1.7 * s.size
-      && Math.abs(s.x0 - prev.textX0) < 3;
-    if (joinable) prev.segs.push(s);
-    else groups.push({ segs: [s], textX0: s.textX0, bullet: s.bullet });
+      && (Math.abs(s.x0 - prev.textX0) < 3 || indented);
+    if (joinable) {
+      prev.segs.push(s);
+      if (indented) prev.textX0 = s.x0; // 2行目からの左端を段落の左端にする
+    } else groups.push({ segs: [s], textX0: s.textX0, bullet: s.bullet });
   }
   return groups.map((g) => {
     const first = g.segs[0];
-    // 訳す文字：箇条書きの印を除き、行末のハイフンを取って行をつなぐ
+    // 訳す文字：箇条書きの印を除き、行末のハイフンを取って行をつなぐ。継ぎ目のどちらかが漢字・かな・全角の記号なら空白を入れない
+    // （入れると「更新ツー ル」「伝えてく ださい」のように語が切れてモデルへ渡り、訳が崩れた。2026-11-25）
     const chs = [];
     g.segs.forEach((s, si) => {
       const cs = s.chars.slice(si === 0 ? g.bullet : 0);
       cs.forEach((c, ci) => { if (!(c.hyphen && ci === cs.length - 1)) chs.push(c); });
-      if (si < g.segs.length - 1 && !cs.at(-1)?.hyphen) chs.push({ ch: ' ', gen: true });
+      const next = g.segs[si + 1]?.chars[0]?.ch ?? '';
+      if (si < g.segs.length - 1 && !cs.at(-1)?.hyphen && !NO_SPACE.test(cs.at(-1)?.ch ?? '') && !NO_SPACE.test(next)) chs.push({ ch: ' ', gen: true });
     });
     const translated = new Set(chs.filter((c) => !c.gen && c.ch !== ' '));
     const { tokens, elems } = tokensOf(chs, first.bold);
